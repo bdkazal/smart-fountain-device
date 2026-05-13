@@ -13,6 +13,7 @@
 // Goal:
 // - connect Wi-Fi
 // - fetch Laravel config
+// - load latest known output state from config
 // - print server_time_utc and daily_timeline
 // - post basic state
 // - poll commands without applying hardware yet
@@ -144,6 +145,90 @@ void printTimeline(JsonObject dailyTimeline)
   }
 }
 
+JsonObject outputStateObject(JsonObject outputConfig)
+{
+  JsonObject state = outputConfig["state"].as<JsonObject>();
+
+  if (!state.isNull())
+  {
+    return state;
+  }
+
+  return outputConfig;
+}
+
+void loadInitialOutputsFromConfig(JsonObject config)
+{
+  JsonObject configOutputs = config["outputs"].as<JsonObject>();
+
+  if (configOutputs.isNull())
+  {
+    Serial.println("No config.outputs found. Keeping safe default output state.");
+    return;
+  }
+
+  JsonObject pumpOutput = configOutputs["pump"].as<JsonObject>();
+  if (!pumpOutput.isNull())
+  {
+    JsonObject state = outputStateObject(pumpOutput);
+    outputs.pumpEnabled = state["enabled"] | false;
+    outputs.pumpSpeedPercent = constrain((int)(state["speed_percent"] | 0), 0, 100);
+
+    if (!outputs.pumpEnabled)
+    {
+      outputs.pumpSpeedPercent = 0;
+    }
+  }
+
+  JsonObject cobOutput = configOutputs["cob_light"].as<JsonObject>();
+  if (!cobOutput.isNull())
+  {
+    JsonObject state = outputStateObject(cobOutput);
+    outputs.cobEnabled = state["enabled"] | false;
+    outputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
+
+    if (!outputs.cobEnabled)
+    {
+      outputs.cobBrightnessPercent = 0;
+    }
+  }
+
+  JsonObject rgbOutput = configOutputs["rgb_light"].as<JsonObject>();
+  if (!rgbOutput.isNull())
+  {
+    JsonObject state = outputStateObject(rgbOutput);
+    outputs.rgbEnabled = state["enabled"] | false;
+    outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
+    outputs.rgbColor = String((const char *)(state["color"] | outputs.rgbColor.c_str()));
+    outputs.rgbEffect = String((const char *)(state["effect"] | outputs.rgbEffect.c_str()));
+
+    if (!outputs.rgbEnabled)
+    {
+      outputs.rgbBrightnessPercent = 0;
+    }
+  }
+
+  Serial.println("Initial output state loaded from Laravel config:");
+  Serial.print(" - pump enabled=");
+  Serial.print(outputs.pumpEnabled ? "true" : "false");
+  Serial.print(" speed=");
+  Serial.println(outputs.pumpSpeedPercent);
+
+  Serial.print(" - cob_light enabled=");
+  Serial.print(outputs.cobEnabled ? "true" : "false");
+  Serial.print(" brightness=");
+  Serial.println(outputs.cobBrightnessPercent);
+
+  Serial.print(" - rgb_light enabled=");
+  Serial.print(outputs.rgbEnabled ? "true" : "false");
+  Serial.print(" brightness=");
+  Serial.print(outputs.rgbBrightnessPercent);
+  Serial.print(" color=");
+  Serial.print(outputs.rgbColor);
+  Serial.print(" effect=");
+  Serial.println(outputs.rgbEffect);
+}
+
 bool fetchConfig()
 {
   if (!isWifiConnected())
@@ -207,6 +292,8 @@ bool fetchConfig()
   {
     Serial.println("WARNING: config.device_type is not smart_fountain.");
   }
+
+  loadInitialOutputsFromConfig(config);
 
   JsonObject dailyTimeline = config["daily_timeline"].as<JsonObject>();
   printTimeline(dailyTimeline);
