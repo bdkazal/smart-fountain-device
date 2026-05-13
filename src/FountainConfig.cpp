@@ -87,6 +87,57 @@ void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &
   Serial.println(outputs.rgbEffect);
 }
 
+bool FountainConfig::loadFromConfigObjectJson(const String &configJson, FountainOutputState &outputs)
+{
+  if (configJson.length() == 0)
+  {
+    Serial.println("No cached config JSON to parse.");
+    return false;
+  }
+
+  StaticJsonDocument<12288> doc;
+  DeserializationError error = deserializeJson(doc, configJson);
+
+  if (error)
+  {
+    Serial.print("Failed to parse cached config JSON: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+
+  JsonObject config = doc.as<JsonObject>();
+  loadInitialOutputs(config, outputs);
+  printDailyTimeline(config["daily_timeline"].as<JsonObject>());
+
+  return true;
+}
+
+String FountainConfig::extractConfigJsonFromResponse(const String &response)
+{
+  StaticJsonDocument<12288> doc;
+  DeserializationError error = deserializeJson(doc, response);
+
+  if (error)
+  {
+    Serial.print("Failed to parse config response for cache extraction: ");
+    Serial.println(error.c_str());
+    return "";
+  }
+
+  JsonObject config = doc["config"].as<JsonObject>();
+
+  if (config.isNull())
+  {
+    Serial.println("Cannot extract cache config: config object missing.");
+    return "";
+  }
+
+  String configJson;
+  serializeJson(config, configJson);
+
+  return configJson;
+}
+
 void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
 {
   // The Smart Fountain timeline is intentionally daily-only for V1. The backend
