@@ -4,25 +4,20 @@
 #include <ArduinoJson.h>
 
 #include "DeviceSecrets.h"
-
-#include "DevFlags.h"
+#include "FountainTypes.h"
+#include "WaterLevelSensor.h"
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
 #endif
 
-#ifndef SIMULATE_WATER_LOW
-#define SIMULATE_WATER_LOW false
-#endif
-
-// First Smart Fountain firmware skeleton.
-// Goal:
-// - connect Wi-Fi
-// - fetch Laravel config
-// - load latest known output state from config
-// - print server_time_utc and daily_timeline
-// - post basic state
-// - poll commands without applying hardware yet
+// Smart Fountain firmware skeleton.
+//
+// This file intentionally keeps the current API flow in one place while the
+// firmware is still small. As the product grows, hardware/output/config/cache
+// responsibilities should move into modules. The first module extraction is
+// WaterLevelSensor, because pump safety must remain local and independent of
+// Laravel or internet availability.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -39,29 +34,9 @@ String serverTimeUtc = "";
 String deviceType = "";
 String timelineRepeat = "";
 
-struct FountainOutputState
-{
-  bool pumpEnabled = false;
-  int pumpSpeedPercent = 0;
-
-  bool cobEnabled = false;
-  int cobBrightnessPercent = 0;
-
-  bool rgbEnabled = false;
-  int rgbBrightnessPercent = 0;
-  String rgbColor = "#000000";
-  String rgbEffect = "solid";
-};
-
-struct FountainReadings
-{
-  bool waterLow = false;
-  int waterLevelPercent = 50;
-  int waterLevelRaw = 0;
-};
-
 FountainOutputState outputs;
 FountainReadings readings;
+WaterLevelSensor waterLevelSensor;
 
 String apiUrl(const String &path)
 {
@@ -77,6 +52,8 @@ String apiUrl(const String &path)
 
 void addDeviceHeaders(HTTPClient &http)
 {
+  // All Biztola device endpoints use the same simple device-key auth header.
+  // The device UUID is still included in query/body so Laravel can identify the row.
   http.addHeader("Accept", "application/json");
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-DEVICE-KEY", DEVICE_API_KEY);
@@ -89,26 +66,7 @@ bool isWifiConnected()
 
 void updateWaterReadings()
 {
-  bool simulatedWaterLow = SIMULATE_WATER_LOW;
-
-  if (readings.waterLow != simulatedWaterLow)
-  {
-    Serial.print("Water-low simulation changed: ");
-    Serial.println(simulatedWaterLow ? "LOW WATER" : "WATER OK");
-  }
-
-  readings.waterLow = simulatedWaterLow;
-
-  if (readings.waterLow)
-  {
-    readings.waterLevelPercent = 0;
-    readings.waterLevelRaw = 0;
-  }
-  else
-  {
-    readings.waterLevelPercent = 50;
-    readings.waterLevelRaw = 2048;
-  }
+  waterLevelSensor.update(readings);
 }
 
 void connectWifi()
@@ -144,6 +102,8 @@ void connectWifi()
 
 void printTimeline(JsonObject dailyTimeline)
 {
+  // For now we only print the daily timeline. A later module will cache these
+  // ranges and apply scenes locally when Laravel/API is unavailable.
   timelineRepeat = dailyTimeline["repeat"] | "";
 
   Serial.print("Daily timeline enabled: ");
@@ -177,6 +137,8 @@ void printTimeline(JsonObject dailyTimeline)
 
 JsonObject outputStateObject(JsonObject outputConfig)
 {
+  // Laravel may return an output either as { state: {...} } or directly as a
+  // state-like object. This keeps the firmware tolerant during API evolution.
   JsonObject state = outputConfig["state"].as<JsonObject>();
 
   if (!state.isNull())
@@ -189,6 +151,8 @@ JsonObject outputStateObject(JsonObject outputConfig)
 
 void loadInitialOutputsFromConfig(JsonObject config)
 {
+  // Boot should not blindly force every output OFF. The firmware starts from
+  // Laravel's latest known platform state, then reports actual state back.
   JsonObject configOutputs = config["outputs"].as<JsonObject>();
 
   if (configOutputs.isNull())
@@ -333,6 +297,8 @@ bool fetchConfig()
 
 void enforceWaterSafety()
 {
+  // Hard local safety rule: pump must not run when the water-level sensor says
+  // low water. This must work even when Laravel, Wi-Fi, or the router is down.
   if (!readings.waterLow)
   {
     return;
@@ -349,6 +315,8 @@ void enforceWaterSafety()
 
 String buildStatePayload(const char *source)
 {
+  // /api/device/state is the trusted hardware truth for persistent-state devices.
+  // The backend may know the requested state, but the firmware reports actual state.
   StaticJsonDocument<2048> doc;
 
   doc["device_uuid"] = DEVICE_UUID;
@@ -650,6 +618,8 @@ void processCommand(JsonObject command)
   Serial.print(" type=");
   Serial.println(commandType);
 
+  // For persistent-state products, executed means "state applied", not
+  // "operation completed". The final POST /api/device/state remains truth.
   ackCommand(commandId, "acknowledged");
 
   bool applied = false;
@@ -748,6 +718,7 @@ void setup()
   Serial.print("Firmware version: ");
   Serial.println(FIRMWARE_VERSION);
 
+  waterLevelSensor.begin();
   updateWaterReadings();
   connectWifi();
 
@@ -768,6 +739,8 @@ void loop()
 {
   unsigned long now = millis();
 
+  // Local readings and safety run before network work so slow/failing HTTP
+  // cannot delay pump protection.
   updateWaterReadings();
   enforceWaterSafety();
 
@@ -780,7 +753,6 @@ void loop()
       lastWifiRetryAt = now;
     }
 
-    enforceWaterSafety();
     delay(20);
     return;
   }
@@ -803,6 +775,5 @@ void loop()
     lastCommandPollAt = now;
   }
 
-  enforceWaterSafety();
   delay(20);
 }
