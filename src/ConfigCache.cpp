@@ -10,6 +10,10 @@ Preferences preferences;
 // is reused or tested on the same ESP32 during development.
 static const char *NAMESPACE = "fountain";
 static const char *KEY_CONFIG_JSON = "cfg_json";
+
+// ESP32 NVS strings are not suitable for large JSON documents. Keep a safety
+// margin below the practical 4000-byte string limit, including null terminator.
+static const size_t MAX_SAFE_CONFIG_JSON_BYTES = 3800;
 }
 
 void beginConfigCache()
@@ -40,6 +44,13 @@ bool saveCachedConfigJsonIfChanged(const String &configJson)
     return false;
   }
 
+  if (configJson.length() >= MAX_SAFE_CONFIG_JSON_BYTES)
+  {
+    Serial.print("Config cache skipped: JSON too large for NVS. length=");
+    Serial.println(configJson.length());
+    return false;
+  }
+
   String existingConfigJson = loadCachedConfigJson();
 
   if (existingConfigJson == configJson)
@@ -48,8 +59,16 @@ bool saveCachedConfigJsonIfChanged(const String &configJson)
     return false;
   }
 
-  preferences.putString(KEY_CONFIG_JSON, configJson);
-  Serial.println("Config cache saved to flash.");
+  size_t written = preferences.putString(KEY_CONFIG_JSON, configJson);
+
+  if (written == 0)
+  {
+    Serial.println("Config cache write failed.");
+    return false;
+  }
+
+  Serial.print("Config cache saved to flash. bytes=");
+  Serial.println(written);
 
   return true;
 }
