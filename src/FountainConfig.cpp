@@ -12,6 +12,49 @@ JsonObject FountainConfig::outputStateObject(JsonObject outputConfig)
   return outputConfig;
 }
 
+void FountainConfig::copyOutputState(JsonObject sourceOutputs, JsonObject targetOutputs, const char *key)
+{
+  // The compact cache stores only the state fields firmware needs to restore
+  // output state and run an offline timeline. Dashboard-only metadata is ignored.
+  JsonObject sourceOutput = sourceOutputs[key].as<JsonObject>();
+
+  if (sourceOutput.isNull())
+  {
+    return;
+  }
+
+  JsonObject sourceState = outputStateObject(sourceOutput);
+  JsonObject targetState = targetOutputs[key].to<JsonObject>();
+
+  if (strcmp(key, "pump") == 0)
+  {
+    bool enabled = sourceState["enabled"] | false;
+    int speed = constrain((int)(sourceState["speed_percent"] | 0), 0, 100);
+    targetState["enabled"] = enabled;
+    targetState["speed_percent"] = enabled ? speed : 0;
+    return;
+  }
+
+  if (strcmp(key, "cob_light") == 0)
+  {
+    bool enabled = sourceState["enabled"] | false;
+    int brightness = constrain((int)(sourceState["brightness_percent"] | 0), 0, 100);
+    targetState["enabled"] = enabled;
+    targetState["brightness_percent"] = enabled ? brightness : 0;
+    return;
+  }
+
+  if (strcmp(key, "rgb_light") == 0)
+  {
+    bool enabled = sourceState["enabled"] | false;
+    int brightness = constrain((int)(sourceState["brightness_percent"] | 0), 0, 100);
+    targetState["enabled"] = enabled;
+    targetState["brightness_percent"] = enabled ? brightness : 0;
+    targetState["color"] = sourceState["color"] | "#000000";
+    targetState["effect"] = sourceState["effect"] | "solid";
+  }
+}
+
 void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &outputs)
 {
   // Boot should start from Laravel's latest known output state, then report the
@@ -95,7 +138,8 @@ bool FountainConfig::loadFromConfigObjectJson(const String &configJson, Fountain
     return false;
   }
 
-  StaticJsonDocument<12288> doc;
+  // Heap-backed JsonDocument avoids large stack allocation on ESP32-C3.
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, configJson);
 
   if (error)
@@ -112,30 +156,50 @@ bool FountainConfig::loadFromConfigObjectJson(const String &configJson, Fountain
   return true;
 }
 
-String FountainConfig::extractConfigJsonFromResponse(const String &response)
+String FountainConfig::buildCompactCacheJson(JsonObject config)
 {
-  StaticJsonDocument<12288> doc;
-  DeserializationError error = deserializeJson(doc, response);
+  // This is intentionally not the full Laravel config. It is the smallest useful
+  // firmware cache for boot restore and upcoming offline daily timeline support.
+  JsonDocument compact;
 
-  if (error)
+  compact["cache_version"] = 1;
+  compact["device_type"] = config["device_type"] | "smart_fountain";
+  compact["timezone_offset_minutes"] = config["timezone_offset_minutes"] | 0;
+
+  JsonObject sourceOutputs = config["outputs"].as<JsonObject>();
+  JsonObject targetOutputs = compact["outputs"].to<JsonObject>();
+  copyOutputState(sourceOutputs, targetOutputs, "pump");
+  copyOutputState(sourceOutputs, targetOutputs, "cob_light");
+  copyOutputState(sourceOutputs, targetOutputs, "rgb_light");
+
+  JsonObject sourceTimeline = config["daily_timeline"].as<JsonObject>();
+  JsonObject targetTimeline = compact["daily_timeline"].to<JsonObject>();
+  targetTimeline["enabled"] = sourceTimeline["enabled"] | false;
+  targetTimeline["repeat"] = sourceTimeline["repeat"] | "daily";
+
+  JsonArray sourceRanges = sourceTimeline["ranges"].as<JsonArray>();
+  JsonArray targetRanges = targetTimeline["ranges"].to<JsonArray>();
+
+  for (JsonObject sourceRange : sourceRanges)
   {
-    Serial.print("Failed to parse config response for cache extraction: ");
-    Serial.println(error.c_str());
-    return "";
+    JsonObject targetRange = targetRanges.add<JsonObject>();
+    targetRange["period"] = sourceRange["period"] | "";
+    targetRange["start_time"] = sourceRange["start_time"] | "";
+    targetRange["end_time"] = sourceRange["end_time"] | "";
+    targetRange["scene_id"] = sourceRange["scene_id"] | 0;
+    targetRange["scene_name"] = sourceRange["scene_name"] | "";
+
+    JsonObject sourceRangeOutputs = sourceRange["outputs"].as<JsonObject>();
+    JsonObject targetRangeOutputs = targetRange["outputs"].to<JsonObject>();
+    copyOutputState(sourceRangeOutputs, targetRangeOutputs, "pump");
+    copyOutputState(sourceRangeOutputs, targetRangeOutputs, "cob_light");
+    copyOutputState(sourceRangeOutputs, targetRangeOutputs, "rgb_light");
   }
 
-  JsonObject config = doc["config"].as<JsonObject>();
+  String compactJson;
+  serializeJson(compact, compactJson);
 
-  if (config.isNull())
-  {
-    Serial.println("Cannot extract cache config: config object missing.");
-    return "";
-  }
-
-  String configJson;
-  serializeJson(config, configJson);
-
-  return configJson;
+  return compactJson;
 }
 
 void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
