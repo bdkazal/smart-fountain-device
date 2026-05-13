@@ -150,7 +150,9 @@ bool fetchConfig()
     return false;
   }
 
-  StaticJsonDocument<12288> doc;
+  // Use ArduinoJson 7 heap-backed JsonDocument. A 12 KB StaticJsonDocument on
+  // the ESP32-C3 task stack can cause Guru Meditation crashes after parsing.
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
   if (error)
@@ -188,6 +190,9 @@ bool fetchConfig()
   // we do not allocate/parse a second large JSON document on the ESP32-C3 stack.
   String configJson;
   serializeJson(config, configJson);
+
+  Serial.print("Config cache JSON length: ");
+  Serial.println(configJson.length());
 
   if (configJson.length() > 0)
   {
