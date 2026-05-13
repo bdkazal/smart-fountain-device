@@ -184,9 +184,11 @@ bool fetchConfig()
   fountainConfig.loadInitialOutputs(config, outputs);
   fountainConfig.printDailyTimeline(config["daily_timeline"].as<JsonObject>());
 
-  // Cache only the inner config object. server_time_utc changes on every response
-  // and should not cause a flash write every minute.
-  String configJson = fountainConfig.extractConfigJsonFromResponse(response);
+  // Cache only the inner config object. Reuse the already parsed JSON object so
+  // we do not allocate/parse a second large JSON document on the ESP32-C3 stack.
+  String configJson;
+  serializeJson(config, configJson);
+
   if (configJson.length() > 0)
   {
     saveCachedConfigJsonIfChanged(configJson);
