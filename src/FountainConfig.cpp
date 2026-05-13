@@ -206,7 +206,8 @@ void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
 {
   // The Smart Fountain timeline is intentionally daily-only for V1. The backend
   // creates online scene commands, and firmware will later reuse this cached
-  // timeline when internet/Laravel is unavailable.
+  // timeline when internet/Laravel is unavailable. For offline use, each range
+  // must include output states, not only scene names.
   lastTimelineRepeat = dailyTimeline["repeat"] | "";
 
   Serial.print("Daily timeline enabled: ");
@@ -226,6 +227,8 @@ void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
     const char *startTime = range["start_time"] | "--:--";
     const char *endTime = range["end_time"] | "--:--";
     const char *sceneName = range["scene_name"] | "missing scene";
+    JsonObject rangeOutputs = range["outputs"].as<JsonObject>();
+    bool hasApplyReadyOutputs = !rangeOutputs.isNull() && rangeOutputs.size() > 0;
 
     Serial.print(" - ");
     Serial.print(period);
@@ -234,7 +237,9 @@ void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
     Serial.print(" -> ");
     Serial.print(endTime);
     Serial.print(" scene: ");
-    Serial.println(sceneName);
+    Serial.print(sceneName);
+    Serial.print(" outputs: ");
+    Serial.println(hasApplyReadyOutputs ? "yes" : "missing");
   }
 }
 
