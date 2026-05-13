@@ -22,7 +22,7 @@
 // - WaterLevelSensor owns water reading/simulation for now.
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
-// - ConfigCache owns the last valid Laravel config stored in ESP32 flash/NVS.
+// - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
 // - ApiClient owns common Laravel URL/header rules.
 // Later, offline timeline and UTC/RTC time should become modules too.
 
@@ -73,7 +73,8 @@ void loadCachedConfigIfAvailable()
   }
 
   Serial.println();
-  Serial.println("Loading cached Laravel config from flash...");
+  Serial.print("Loading cached Laravel config from flash. bytes=");
+  Serial.println(cachedConfigJson.length());
 
   bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs);
 
@@ -186,12 +187,11 @@ bool fetchConfig()
   fountainConfig.loadInitialOutputs(config, outputs);
   fountainConfig.printDailyTimeline(config["daily_timeline"].as<JsonObject>());
 
-  // Cache only the inner config object. Reuse the already parsed JSON object so
-  // we do not allocate/parse a second large JSON document on the ESP32-C3 stack.
-  String configJson;
-  serializeJson(config, configJson);
+  // Cache only compact firmware data. The full Laravel config is too large for
+  // Preferences/NVS and contains dashboard-only fields.
+  String configJson = fountainConfig.buildCompactCacheJson(config);
 
-  Serial.print("Config cache JSON length: ");
+  Serial.print("Compact config cache JSON length: ");
   Serial.println(configJson.length());
 
   if (configJson.length() > 0)
