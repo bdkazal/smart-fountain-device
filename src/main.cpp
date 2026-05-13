@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 
 #include "ApiClient.h"
+#include "ConfigCache.h"
 #include "DeviceSecrets.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
@@ -21,8 +22,9 @@
 // - WaterLevelSensor owns water reading/simulation for now.
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
+// - ConfigCache owns the last valid Laravel config stored in ESP32 flash/NVS.
 // - ApiClient owns common Laravel URL/header rules.
-// Later, config cache and offline timeline should become modules too.
+// Later, offline timeline and UTC/RTC time should become modules too.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -58,6 +60,30 @@ void updateWaterReadings()
 void enforceWaterSafety()
 {
   fountainOutputs.enforceWaterSafety(outputs, readings);
+}
+
+void loadCachedConfigIfAvailable()
+{
+  String cachedConfigJson = loadCachedConfigJson();
+
+  if (cachedConfigJson.length() == 0)
+  {
+    Serial.println("No cached Laravel config found.");
+    return;
+  }
+
+  Serial.println();
+  Serial.println("Loading cached Laravel config from flash...");
+
+  bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs);
+
+  if (!parsed)
+  {
+    Serial.println("Cached Laravel config exists but could not be parsed.");
+    return;
+  }
+
+  Serial.println("Cached Laravel config loaded.");
 }
 
 void connectWifi()
@@ -157,6 +183,14 @@ bool fetchConfig()
 
   fountainConfig.loadInitialOutputs(config, outputs);
   fountainConfig.printDailyTimeline(config["daily_timeline"].as<JsonObject>());
+
+  // Cache only the inner config object. server_time_utc changes on every response
+  // and should not cause a flash write every minute.
+  String configJson = fountainConfig.extractConfigJsonFromResponse(response);
+  if (configJson.length() > 0)
+  {
+    saveCachedConfigJsonIfChanged(configJson);
+  }
 
   return true;
 }
@@ -468,9 +502,15 @@ void setup()
   Serial.print("Firmware version: ");
   Serial.println(FIRMWARE_VERSION);
 
+  beginConfigCache();
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   waterLevelSensor.begin();
   updateWaterReadings();
+
+  // Cached config gives the device a useful last-known output/timeline state
+  // before Laravel is contacted. This is the foundation for offline timeline.
+  loadCachedConfigIfAvailable();
+
   connectWifi();
 
   if (isWifiConnected())
