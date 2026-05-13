@@ -3,6 +3,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
+#include "ApiClient.h"
 #include "DeviceSecrets.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
@@ -18,7 +19,8 @@
 // isolated home are moving out of this file step by step:
 // - WaterLevelSensor owns water reading/simulation for now.
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
-// Later, API client, config cache, and offline timeline should become modules too.
+// - ApiClient owns common Laravel URL/header rules.
+// Later, config cache and offline timeline should become modules too.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -35,31 +37,11 @@ String serverTimeUtc = "";
 String deviceType = "";
 String timelineRepeat = "";
 
+ApiClient apiClient;
 FountainOutputState outputs;
 FountainReadings readings;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
-
-String apiUrl(const String &path)
-{
-  String base = API_BASE_URL;
-
-  if (base.endsWith("/"))
-  {
-    base.remove(base.length() - 1);
-  }
-
-  return base + path;
-}
-
-void addDeviceHeaders(HTTPClient &http)
-{
-  // All Biztola device endpoints use the same simple device-key auth header.
-  // The device UUID is still included in query/body so Laravel can identify the row.
-  http.addHeader("Accept", "application/json");
-  http.addHeader("Content-Type", "application/json");
-  http.addHeader("X-DEVICE-KEY", DEVICE_API_KEY);
-}
 
 bool isWifiConnected()
 {
@@ -238,12 +220,12 @@ bool fetchConfig()
     return false;
   }
 
-  String url = apiUrl("/api/device/config?device_uuid=" + String(DEVICE_UUID));
+  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
   http.setTimeout(7000);
   http.begin(url);
-  addDeviceHeaders(http);
+  apiClient.addDeviceHeaders(http);
 
   Serial.println();
   Serial.print("GET ");
@@ -363,13 +345,13 @@ bool postState(const char *source = "device_state")
   updateWaterReadings();
   enforceWaterSafety();
 
-  String url = apiUrl("/api/device/state");
+  String url = apiClient.url("/api/device/state");
   String payload = buildStatePayload(source);
 
   HTTPClient http;
   http.setTimeout(7000);
   http.begin(url);
-  addDeviceHeaders(http);
+  apiClient.addDeviceHeaders(http);
 
   Serial.println();
   Serial.print("POST ");
@@ -404,7 +386,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
     return false;
   }
 
-  String url = apiUrl("/api/device/commands/" + String(commandId) + "/ack");
+  String url = apiClient.url("/api/device/commands/" + String(commandId) + "/ack");
 
   StaticJsonDocument<512> doc;
   doc["device_uuid"] = DEVICE_UUID;
@@ -421,7 +403,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   HTTPClient http;
   http.setTimeout(7000);
   http.begin(url);
-  addDeviceHeaders(http);
+  apiClient.addDeviceHeaders(http);
 
   Serial.print("ACK command ");
   Serial.print(commandId);
@@ -550,12 +532,12 @@ bool pollCommands()
     return false;
   }
 
-  String url = apiUrl("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
+  String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
   http.setTimeout(7000);
   http.begin(url);
-  addDeviceHeaders(http);
+  apiClient.addDeviceHeaders(http);
 
   Serial.println();
   Serial.print("GET ");
@@ -609,6 +591,7 @@ void setup()
   Serial.print("Firmware version: ");
   Serial.println(FIRMWARE_VERSION);
 
+  apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   waterLevelSensor.begin();
   updateWaterReadings();
   connectWifi();
