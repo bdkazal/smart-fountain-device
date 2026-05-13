@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 
 #include "DeviceSecrets.h"
+#include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "WaterLevelSensor.h"
 
@@ -13,11 +14,11 @@
 
 // Smart Fountain firmware skeleton.
 //
-// This file intentionally keeps the current API flow in one place while the
-// firmware is still small. As the product grows, hardware/output/config/cache
-// responsibilities should move into modules. The first module extraction is
-// WaterLevelSensor, because pump safety must remain local and independent of
-// Laravel or internet availability.
+// Main owns the boot/runtime API flow. Product rules that deserve their own
+// isolated home are moving out of this file step by step:
+// - WaterLevelSensor owns water reading/simulation for now.
+// - FountainOutputs owns pump/COB/RGB state application and local pump safety.
+// Later, API client, config cache, and offline timeline should become modules too.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -37,6 +38,7 @@ String timelineRepeat = "";
 FountainOutputState outputs;
 FountainReadings readings;
 WaterLevelSensor waterLevelSensor;
+FountainOutputs fountainOutputs;
 
 String apiUrl(const String &path)
 {
@@ -67,6 +69,11 @@ bool isWifiConnected()
 void updateWaterReadings()
 {
   waterLevelSensor.update(readings);
+}
+
+void enforceWaterSafety()
+{
+  fountainOutputs.enforceWaterSafety(outputs, readings);
 }
 
 void connectWifi()
@@ -295,24 +302,6 @@ bool fetchConfig()
   return true;
 }
 
-void enforceWaterSafety()
-{
-  // Hard local safety rule: pump must not run when the water-level sensor says
-  // low water. This must work even when Laravel, Wi-Fi, or the router is down.
-  if (!readings.waterLow)
-  {
-    return;
-  }
-
-  if (outputs.pumpEnabled || outputs.pumpSpeedPercent != 0)
-  {
-    Serial.println("Water safety active: forcing pump OFF.");
-  }
-
-  outputs.pumpEnabled = false;
-  outputs.pumpSpeedPercent = 0;
-}
-
 String buildStatePayload(const char *source)
 {
   // /api/device/state is the trusted hardware truth for persistent-state devices.
@@ -457,106 +446,6 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   return true;
 }
 
-void applyPumpState(JsonObject state, const char *source)
-{
-  updateWaterReadings();
-
-  bool requestedEnabled = state["enabled"] | false;
-  int requestedSpeed = constrain((int)(state["speed_percent"] | 0), 0, 100);
-
-  if (!requestedEnabled)
-  {
-    requestedSpeed = 0;
-  }
-
-  if (readings.waterLow && requestedEnabled)
-  {
-    Serial.println("Pump ON ignored because water_low=true.");
-    outputs.pumpEnabled = false;
-    outputs.pumpSpeedPercent = 0;
-    return;
-  }
-
-  outputs.pumpEnabled = requestedEnabled;
-  outputs.pumpSpeedPercent = requestedSpeed;
-
-  Serial.print("Pump state applied from ");
-  Serial.print(source);
-  Serial.print(": enabled=");
-  Serial.print(outputs.pumpEnabled ? "true" : "false");
-  Serial.print(" speed=");
-  Serial.println(outputs.pumpSpeedPercent);
-}
-
-void applyCobState(JsonObject state, const char *source)
-{
-  outputs.cobEnabled = state["enabled"] | false;
-  outputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-
-  if (!outputs.cobEnabled)
-  {
-    outputs.cobBrightnessPercent = 0;
-  }
-
-  Serial.print("COB state applied from ");
-  Serial.print(source);
-  Serial.print(": enabled=");
-  Serial.print(outputs.cobEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.println(outputs.cobBrightnessPercent);
-}
-
-void applyRgbState(JsonObject state, const char *source)
-{
-  outputs.rgbEnabled = state["enabled"] | false;
-  outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-  outputs.rgbColor = String((const char *)(state["color"] | outputs.rgbColor.c_str()));
-  outputs.rgbEffect = String((const char *)(state["effect"] | outputs.rgbEffect.c_str()));
-
-  if (!outputs.rgbEnabled)
-  {
-    outputs.rgbBrightnessPercent = 0;
-  }
-
-  Serial.print("RGB state applied from ");
-  Serial.print(source);
-  Serial.print(": enabled=");
-  Serial.print(outputs.rgbEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.print(outputs.rgbBrightnessPercent);
-  Serial.print(" color=");
-  Serial.print(outputs.rgbColor);
-  Serial.print(" effect=");
-  Serial.println(outputs.rgbEffect);
-}
-
-bool applyOutput(const char *outputKey, JsonObject state, const char *source)
-{
-  String key = outputKey;
-
-  if (key == "pump")
-  {
-    applyPumpState(state, source);
-    return true;
-  }
-
-  if (key == "cob_light")
-  {
-    applyCobState(state, source);
-    return true;
-  }
-
-  if (key == "rgb_light")
-  {
-    applyRgbState(state, source);
-    return true;
-  }
-
-  Serial.print("Unknown output key: ");
-  Serial.println(key);
-  return false;
-}
-
 bool handleOutputSet(JsonObject payload)
 {
   const char *outputKey = payload["output"] | "";
@@ -569,7 +458,8 @@ bool handleOutputSet(JsonObject payload)
     return false;
   }
 
-  return applyOutput(outputKey, state, source);
+  updateWaterReadings();
+  return fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
 }
 
 bool handleSceneApply(JsonObject payload)
@@ -584,13 +474,14 @@ bool handleSceneApply(JsonObject payload)
   }
 
   bool allApplied = true;
+  updateWaterReadings();
 
   for (JsonPair outputPair : sceneOutputs)
   {
     const char *outputKey = outputPair.key().c_str();
     JsonObject state = outputPair.value().as<JsonObject>();
 
-    if (!applyOutput(outputKey, state, source))
+    if (!fountainOutputs.applyOutput(outputKey, state, source, outputs, readings))
     {
       allApplied = false;
     }
