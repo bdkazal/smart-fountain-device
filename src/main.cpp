@@ -5,6 +5,10 @@
 
 #include "DeviceSecrets.h"
 
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "smart-fountain-dev-0.1"
+#endif
+
 // First Smart Fountain firmware skeleton.
 // Goal:
 // - connect Wi-Fi
