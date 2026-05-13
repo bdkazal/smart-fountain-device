@@ -5,6 +5,7 @@
 
 #include "ApiClient.h"
 #include "DeviceSecrets.h"
+#include "FountainConfig.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "WaterLevelSensor.h"
@@ -19,6 +20,7 @@
 // isolated home are moving out of this file step by step:
 // - WaterLevelSensor owns water reading/simulation for now.
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
+// - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ApiClient owns common Laravel URL/header rules.
 // Later, config cache and offline timeline should become modules too.
 
@@ -35,9 +37,9 @@ unsigned long lastWifiRetryAt = 0;
 bool serverReachableRecently = false;
 String serverTimeUtc = "";
 String deviceType = "";
-String timelineRepeat = "";
 
 ApiClient apiClient;
+FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
 WaterLevelSensor waterLevelSensor;
@@ -87,129 +89,6 @@ void connectWifi()
   {
     Serial.println("Wi-Fi connection failed. Device will retry later.");
   }
-}
-
-void printTimeline(JsonObject dailyTimeline)
-{
-  // For now we only print the daily timeline. A later module will cache these
-  // ranges and apply scenes locally when Laravel/API is unavailable.
-  timelineRepeat = dailyTimeline["repeat"] | "";
-
-  Serial.print("Daily timeline enabled: ");
-  Serial.println((bool)(dailyTimeline["enabled"] | false) ? "yes" : "no");
-
-  Serial.print("Daily timeline repeat: ");
-  Serial.println(timelineRepeat.length() ? timelineRepeat : "missing");
-
-  JsonArray ranges = dailyTimeline["ranges"].as<JsonArray>();
-
-  Serial.print("Timeline range count: ");
-  Serial.println(ranges.size());
-
-  for (JsonObject range : ranges)
-  {
-    const char *period = range["period"] | "unknown";
-    const char *startTime = range["start_time"] | "--:--";
-    const char *endTime = range["end_time"] | "--:--";
-    const char *sceneName = range["scene_name"] | "missing scene";
-
-    Serial.print(" - ");
-    Serial.print(period);
-    Serial.print(" ");
-    Serial.print(startTime);
-    Serial.print(" -> ");
-    Serial.print(endTime);
-    Serial.print(" scene: ");
-    Serial.println(sceneName);
-  }
-}
-
-JsonObject outputStateObject(JsonObject outputConfig)
-{
-  // Laravel may return an output either as { state: {...} } or directly as a
-  // state-like object. This keeps the firmware tolerant during API evolution.
-  JsonObject state = outputConfig["state"].as<JsonObject>();
-
-  if (!state.isNull())
-  {
-    return state;
-  }
-
-  return outputConfig;
-}
-
-void loadInitialOutputsFromConfig(JsonObject config)
-{
-  // Boot should not blindly force every output OFF. The firmware starts from
-  // Laravel's latest known platform state, then reports actual state back.
-  JsonObject configOutputs = config["outputs"].as<JsonObject>();
-
-  if (configOutputs.isNull())
-  {
-    Serial.println("No config.outputs found. Keeping safe default output state.");
-    return;
-  }
-
-  JsonObject pumpOutput = configOutputs["pump"].as<JsonObject>();
-  if (!pumpOutput.isNull())
-  {
-    JsonObject state = outputStateObject(pumpOutput);
-    outputs.pumpEnabled = state["enabled"] | false;
-    outputs.pumpSpeedPercent = constrain((int)(state["speed_percent"] | 0), 0, 100);
-
-    if (!outputs.pumpEnabled)
-    {
-      outputs.pumpSpeedPercent = 0;
-    }
-  }
-
-  JsonObject cobOutput = configOutputs["cob_light"].as<JsonObject>();
-  if (!cobOutput.isNull())
-  {
-    JsonObject state = outputStateObject(cobOutput);
-    outputs.cobEnabled = state["enabled"] | false;
-    outputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-
-    if (!outputs.cobEnabled)
-    {
-      outputs.cobBrightnessPercent = 0;
-    }
-  }
-
-  JsonObject rgbOutput = configOutputs["rgb_light"].as<JsonObject>();
-  if (!rgbOutput.isNull())
-  {
-    JsonObject state = outputStateObject(rgbOutput);
-    outputs.rgbEnabled = state["enabled"] | false;
-    outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-    outputs.rgbColor = String((const char *)(state["color"] | outputs.rgbColor.c_str()));
-    outputs.rgbEffect = String((const char *)(state["effect"] | outputs.rgbEffect.c_str()));
-
-    if (!outputs.rgbEnabled)
-    {
-      outputs.rgbBrightnessPercent = 0;
-    }
-  }
-
-  Serial.println("Initial output state loaded from Laravel config:");
-  Serial.print(" - pump enabled=");
-  Serial.print(outputs.pumpEnabled ? "true" : "false");
-  Serial.print(" speed=");
-  Serial.println(outputs.pumpSpeedPercent);
-
-  Serial.print(" - cob_light enabled=");
-  Serial.print(outputs.cobEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.println(outputs.cobBrightnessPercent);
-
-  Serial.print(" - rgb_light enabled=");
-  Serial.print(outputs.rgbEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.print(outputs.rgbBrightnessPercent);
-  Serial.print(" color=");
-  Serial.print(outputs.rgbColor);
-  Serial.print(" effect=");
-  Serial.println(outputs.rgbEffect);
 }
 
 bool fetchConfig()
@@ -276,10 +155,8 @@ bool fetchConfig()
     Serial.println("WARNING: config.device_type is not smart_fountain.");
   }
 
-  loadInitialOutputsFromConfig(config);
-
-  JsonObject dailyTimeline = config["daily_timeline"].as<JsonObject>();
-  printTimeline(dailyTimeline);
+  fountainConfig.loadInitialOutputs(config, outputs);
+  fountainConfig.printDailyTimeline(config["daily_timeline"].as<JsonObject>());
 
   return true;
 }
