@@ -5,8 +5,14 @@
 
 #include "DeviceSecrets.h"
 
+#include "DevFlags.h"
+
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
+#endif
+
+#ifndef SIMULATE_WATER_LOW
+#define SIMULATE_WATER_LOW false
 #endif
 
 // First Smart Fountain firmware skeleton.
@@ -79,6 +85,30 @@ void addDeviceHeaders(HTTPClient &http)
 bool isWifiConnected()
 {
   return WiFi.status() == WL_CONNECTED;
+}
+
+void updateWaterReadings()
+{
+  bool simulatedWaterLow = SIMULATE_WATER_LOW;
+
+  if (readings.waterLow != simulatedWaterLow)
+  {
+    Serial.print("Water-low simulation changed: ");
+    Serial.println(simulatedWaterLow ? "LOW WATER" : "WATER OK");
+  }
+
+  readings.waterLow = simulatedWaterLow;
+
+  if (readings.waterLow)
+  {
+    readings.waterLevelPercent = 0;
+    readings.waterLevelRaw = 0;
+  }
+  else
+  {
+    readings.waterLevelPercent = 50;
+    readings.waterLevelRaw = 2048;
+  }
 }
 
 void connectWifi()
@@ -373,6 +403,7 @@ bool postState(const char *source = "device_state")
     return false;
   }
 
+  updateWaterReadings();
   enforceWaterSafety();
 
   String url = apiUrl("/api/device/state");
@@ -460,6 +491,8 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
 
 void applyPumpState(JsonObject state, const char *source)
 {
+  updateWaterReadings();
+
   bool requestedEnabled = state["enabled"] | false;
   int requestedSpeed = constrain((int)(state["speed_percent"] | 0), 0, 100);
 
@@ -715,6 +748,7 @@ void setup()
   Serial.print("Firmware version: ");
   Serial.println(FIRMWARE_VERSION);
 
+  updateWaterReadings();
   connectWifi();
 
   if (isWifiConnected())
@@ -733,6 +767,9 @@ void setup()
 void loop()
 {
   unsigned long now = millis();
+
+  updateWaterReadings();
+  enforceWaterSafety();
 
   if (!isWifiConnected())
   {
