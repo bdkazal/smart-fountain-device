@@ -30,6 +30,7 @@ const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
+const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
 
 unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
@@ -118,6 +119,55 @@ void connectWifi()
   }
 }
 
+bool getWithRetry(const String &url, String &response, int &statusCode)
+{
+  response = "";
+  statusCode = -1;
+
+  for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
+  {
+    HTTPClient http;
+    http.setTimeout(7000);
+    http.begin(url);
+    apiClient.addDeviceHeaders(http);
+
+    if (attempt == 1)
+    {
+      Serial.println();
+      Serial.print("GET ");
+      Serial.println(url);
+    }
+    else
+    {
+      Serial.print("Retry GET attempt ");
+      Serial.print(attempt);
+      Serial.print(" ");
+      Serial.println(url);
+    }
+
+    statusCode = http.GET();
+    response = http.getString();
+    http.end();
+
+    Serial.print("Config HTTP status: ");
+    Serial.println(statusCode);
+
+    if (statusCode >= 200 && statusCode < 300)
+    {
+      return true;
+    }
+
+    // -11 can happen around Wi-Fi reconnect or a just-started Laravel server.
+    // A short retry improves boot reliability without blocking local safety.
+    if (attempt < CONFIG_FETCH_MAX_ATTEMPTS)
+    {
+      delay(300);
+    }
+  }
+
+  return false;
+}
+
 bool fetchConfig()
 {
   if (!isWifiConnected())
@@ -127,32 +177,22 @@ bool fetchConfig()
   }
 
   String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
+  String response;
+  int statusCode;
 
-  HTTPClient http;
-  http.setTimeout(7000);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
-
-  Serial.println();
-  Serial.print("GET ");
-  Serial.println(url);
-
-  int statusCode = http.GET();
-  String response = http.getString();
-  http.end();
-
-  Serial.print("Config HTTP status: ");
-  Serial.println(statusCode);
-
-  if (statusCode < 200 || statusCode >= 300)
+  if (!getWithRetry(url, response, statusCode))
   {
-    Serial.println(response);
+    if (response.length() > 0)
+    {
+      Serial.println(response);
+    }
+
     serverReachableRecently = false;
     return false;
   }
 
-  // Use ArduinoJson 7 heap-backed JsonDocument. A 12 KB StaticJsonDocument on
-  // the ESP32-C3 task stack can cause Guru Meditation crashes after parsing.
+  // ArduinoJson 7 JsonDocument uses heap-backed storage. This avoids large
+  // stack allocations on ESP32-C3 while parsing Laravel config responses.
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
@@ -206,43 +246,43 @@ String buildStatePayload(const char *source)
 {
   // /api/device/state is the trusted hardware truth for persistent-state devices.
   // The backend may know the requested state, but the firmware reports actual state.
-  StaticJsonDocument<2048> doc;
+  JsonDocument doc;
 
   doc["device_uuid"] = DEVICE_UUID;
   doc["device_type"] = "smart_fountain";
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["operation_state"] = "running";
 
-  JsonObject outputJson = doc.createNestedObject("outputs");
+  JsonObject outputJson = doc["outputs"].to<JsonObject>();
 
-  JsonObject pump = outputJson.createNestedObject("pump");
+  JsonObject pump = outputJson["pump"].to<JsonObject>();
   pump["enabled"] = outputs.pumpEnabled;
   pump["speed_percent"] = outputs.pumpSpeedPercent;
   pump["source"] = readings.waterLow ? "water_safety" : source;
 
-  JsonObject cob = outputJson.createNestedObject("cob_light");
+  JsonObject cob = outputJson["cob_light"].to<JsonObject>();
   cob["enabled"] = outputs.cobEnabled;
   cob["brightness_percent"] = outputs.cobBrightnessPercent;
   cob["source"] = source;
 
-  JsonObject rgb = outputJson.createNestedObject("rgb_light");
+  JsonObject rgb = outputJson["rgb_light"].to<JsonObject>();
   rgb["enabled"] = outputs.rgbEnabled;
   rgb["brightness_percent"] = outputs.rgbBrightnessPercent;
   rgb["color"] = outputs.rgbColor;
   rgb["effect"] = outputs.rgbEffect;
   rgb["source"] = source;
 
-  JsonObject readingsJson = doc.createNestedObject("readings");
+  JsonObject readingsJson = doc["readings"].to<JsonObject>();
 
-  JsonObject waterLow = readingsJson.createNestedObject("water_low");
+  JsonObject waterLow = readingsJson["water_low"].to<JsonObject>();
   waterLow["value"] = readings.waterLow ? 1 : 0;
   waterLow["unit"] = "boolean";
 
-  JsonObject waterLevelPercent = readingsJson.createNestedObject("water_level_percent");
+  JsonObject waterLevelPercent = readingsJson["water_level_percent"].to<JsonObject>();
   waterLevelPercent["value"] = readings.waterLevelPercent;
   waterLevelPercent["unit"] = "percent";
 
-  JsonObject waterLevelRaw = readingsJson.createNestedObject("water_level_raw");
+  JsonObject waterLevelRaw = readingsJson["water_level_raw"].to<JsonObject>();
   waterLevelRaw["value"] = readings.waterLevelRaw;
   waterLevelRaw["unit"] = "adc";
 
@@ -306,7 +346,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
 
   String url = apiClient.url("/api/device/commands/" + String(commandId) + "/ack");
 
-  StaticJsonDocument<512> doc;
+  JsonDocument doc;
   doc["device_uuid"] = DEVICE_UUID;
   doc["status"] = status;
 
@@ -477,7 +517,7 @@ bool pollCommands()
 
   serverReachableRecently = true;
 
-  StaticJsonDocument<8192> doc;
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
   if (error)
