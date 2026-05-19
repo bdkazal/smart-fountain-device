@@ -55,6 +55,75 @@ void FountainConfig::copyOutputState(JsonObject sourceOutputs, JsonObject target
   }
 }
 
+void FountainConfig::loadOutputStateFromJson(JsonObject sourceOutputs, const char *key, FountainOutputState &targetOutputs)
+{
+  JsonObject sourceOutput = sourceOutputs[key].as<JsonObject>();
+
+  if (sourceOutput.isNull())
+  {
+    return;
+  }
+
+  JsonObject state = outputStateObject(sourceOutput);
+
+  if (strcmp(key, "pump") == 0)
+  {
+    targetOutputs.pumpEnabled = state["enabled"] | false;
+    targetOutputs.pumpSpeedPercent = constrain((int)(state["speed_percent"] | 0), 0, 100);
+
+    if (!targetOutputs.pumpEnabled)
+    {
+      targetOutputs.pumpSpeedPercent = 0;
+    }
+
+    return;
+  }
+
+  if (strcmp(key, "cob_light") == 0)
+  {
+    targetOutputs.cobEnabled = state["enabled"] | false;
+    targetOutputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
+
+    if (!targetOutputs.cobEnabled)
+    {
+      targetOutputs.cobBrightnessPercent = 0;
+    }
+
+    return;
+  }
+
+  if (strcmp(key, "rgb_light") == 0)
+  {
+    targetOutputs.rgbEnabled = state["enabled"] | false;
+    targetOutputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
+    targetOutputs.rgbColor = String((const char *)(state["color"] | targetOutputs.rgbColor.c_str()));
+    targetOutputs.rgbEffect = String((const char *)(state["effect"] | targetOutputs.rgbEffect.c_str()));
+
+    if (!targetOutputs.rgbEnabled)
+    {
+      targetOutputs.rgbBrightnessPercent = 0;
+    }
+  }
+}
+
+int FountainConfig::parseHHMMToMinutes(const char *hhmm) const
+{
+  if (hhmm == nullptr || strlen(hhmm) < 5)
+  {
+    return -1;
+  }
+
+  int hour = String(hhmm).substring(0, 2).toInt();
+  int minute = String(hhmm).substring(3, 5).toInt();
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59)
+  {
+    return -1;
+  }
+
+  return (hour * 60) + minute;
+}
+
 void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &outputs)
 {
   // Boot should start from Laravel's latest known output state, then report the
@@ -68,46 +137,9 @@ void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &
     return;
   }
 
-  JsonObject pumpOutput = configOutputs["pump"].as<JsonObject>();
-  if (!pumpOutput.isNull())
-  {
-    JsonObject state = outputStateObject(pumpOutput);
-    outputs.pumpEnabled = state["enabled"] | false;
-    outputs.pumpSpeedPercent = constrain((int)(state["speed_percent"] | 0), 0, 100);
-
-    if (!outputs.pumpEnabled)
-    {
-      outputs.pumpSpeedPercent = 0;
-    }
-  }
-
-  JsonObject cobOutput = configOutputs["cob_light"].as<JsonObject>();
-  if (!cobOutput.isNull())
-  {
-    JsonObject state = outputStateObject(cobOutput);
-    outputs.cobEnabled = state["enabled"] | false;
-    outputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-
-    if (!outputs.cobEnabled)
-    {
-      outputs.cobBrightnessPercent = 0;
-    }
-  }
-
-  JsonObject rgbOutput = configOutputs["rgb_light"].as<JsonObject>();
-  if (!rgbOutput.isNull())
-  {
-    JsonObject state = outputStateObject(rgbOutput);
-    outputs.rgbEnabled = state["enabled"] | false;
-    outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-    outputs.rgbColor = String((const char *)(state["color"] | outputs.rgbColor.c_str()));
-    outputs.rgbEffect = String((const char *)(state["effect"] | outputs.rgbEffect.c_str()));
-
-    if (!outputs.rgbEnabled)
-    {
-      outputs.rgbBrightnessPercent = 0;
-    }
-  }
+  loadOutputStateFromJson(configOutputs, "pump", outputs);
+  loadOutputStateFromJson(configOutputs, "cob_light", outputs);
+  loadOutputStateFromJson(configOutputs, "rgb_light", outputs);
 
   Serial.println("Initial output state loaded from Laravel config:");
   Serial.print(" - pump enabled=");
@@ -130,7 +162,41 @@ void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &
   Serial.println(outputs.rgbEffect);
 }
 
-bool FountainConfig::loadFromConfigObjectJson(const String &configJson, FountainOutputState &outputs)
+void FountainConfig::loadDailyTimeline(JsonObject dailyTimeline, FountainDailyTimeline &timeline)
+{
+  timeline = FountainDailyTimeline();
+  timeline.enabled = dailyTimeline["enabled"] | false;
+  timeline.repeat = String((const char *)(dailyTimeline["repeat"] | "daily"));
+  lastTimelineRepeat = timeline.repeat;
+
+  JsonArray ranges = dailyTimeline["ranges"].as<JsonArray>();
+
+  for (JsonObject range : ranges)
+  {
+    if (timeline.rangeCount >= MAX_DAILY_TIMELINE_RANGES)
+    {
+      Serial.println("Daily timeline range limit reached; extra ranges ignored.");
+      break;
+    }
+
+    FountainTimelineRange &targetRange = timeline.ranges[timeline.rangeCount];
+    targetRange.valid = true;
+    targetRange.period = String((const char *)(range["period"] | ""));
+    targetRange.sceneName = String((const char *)(range["scene_name"] | ""));
+    targetRange.sceneId = range["scene_id"] | 0;
+    targetRange.startMinute = parseHHMMToMinutes(range["start_time"] | "");
+    targetRange.endMinute = parseHHMMToMinutes(range["end_time"] | "");
+
+    JsonObject rangeOutputs = range["outputs"].as<JsonObject>();
+    loadOutputStateFromJson(rangeOutputs, "pump", targetRange.outputs);
+    loadOutputStateFromJson(rangeOutputs, "cob_light", targetRange.outputs);
+    loadOutputStateFromJson(rangeOutputs, "rgb_light", targetRange.outputs);
+
+    timeline.rangeCount++;
+  }
+}
+
+bool FountainConfig::loadFromConfigObjectJson(const String &configJson, FountainOutputState &outputs, FountainDailyTimeline &timeline)
 {
   if (configJson.length() == 0)
   {
@@ -151,7 +217,8 @@ bool FountainConfig::loadFromConfigObjectJson(const String &configJson, Fountain
 
   JsonObject config = doc.as<JsonObject>();
   loadInitialOutputs(config, outputs);
-  printDailyTimeline(config["daily_timeline"].as<JsonObject>());
+  loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), timeline);
+  printDailyTimeline(timeline);
 
   return true;
 }
@@ -202,42 +269,34 @@ String FountainConfig::buildCompactCacheJson(JsonObject config)
   return compactJson;
 }
 
-void FountainConfig::printDailyTimeline(JsonObject dailyTimeline)
+void FountainConfig::printDailyTimeline(const FountainDailyTimeline &timeline)
 {
   // The Smart Fountain timeline is intentionally daily-only for V1. The backend
   // creates online scene commands, and firmware will later reuse this cached
   // timeline when internet/Laravel is unavailable. For offline use, each range
   // must include output states, not only scene names.
-  lastTimelineRepeat = dailyTimeline["repeat"] | "";
-
   Serial.print("Daily timeline enabled: ");
-  Serial.println((bool)(dailyTimeline["enabled"] | false) ? "yes" : "no");
+  Serial.println(timeline.enabled ? "yes" : "no");
 
   Serial.print("Daily timeline repeat: ");
-  Serial.println(lastTimelineRepeat.length() ? lastTimelineRepeat : "missing");
-
-  JsonArray ranges = dailyTimeline["ranges"].as<JsonArray>();
+  Serial.println(timeline.repeat.length() ? timeline.repeat : "missing");
 
   Serial.print("Timeline range count: ");
-  Serial.println(ranges.size());
+  Serial.println(timeline.rangeCount);
 
-  for (JsonObject range : ranges)
+  for (int i = 0; i < timeline.rangeCount; i++)
   {
-    const char *period = range["period"] | "unknown";
-    const char *startTime = range["start_time"] | "--:--";
-    const char *endTime = range["end_time"] | "--:--";
-    const char *sceneName = range["scene_name"] | "missing scene";
-    JsonObject rangeOutputs = range["outputs"].as<JsonObject>();
-    bool hasApplyReadyOutputs = !rangeOutputs.isNull() && rangeOutputs.size() > 0;
+    const FountainTimelineRange &range = timeline.ranges[i];
+    bool hasApplyReadyOutputs = range.valid && (range.startMinute >= 0) && (range.endMinute >= 0);
 
     Serial.print(" - ");
-    Serial.print(period);
+    Serial.print(range.period.length() ? range.period : "unknown");
     Serial.print(" ");
-    Serial.print(startTime);
+    Serial.print(range.startMinute);
     Serial.print(" -> ");
-    Serial.print(endTime);
+    Serial.print(range.endMinute);
     Serial.print(" scene: ");
-    Serial.print(sceneName);
+    Serial.print(range.sceneName.length() ? range.sceneName : "missing scene");
     Serial.print(" outputs: ");
     Serial.println(hasApplyReadyOutputs ? "yes" : "missing");
   }
