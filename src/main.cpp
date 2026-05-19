@@ -10,6 +10,7 @@
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
+#include "OfflineTimeline.h"
 #include "WaterLevelSensor.h"
 
 #ifndef FIRMWARE_VERSION
@@ -25,18 +26,21 @@
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
 // - DeviceClock owns server-time sync and local HH:MM calculation.
-// Later, offline timeline should become its own module too.
+// - OfflineTimeline detects which cached timeline range is active.
+// Later, OfflineTimeline will apply cached range outputs while offline.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
+const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 1000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
 
 unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
+unsigned long lastOfflineTimelineCheckAt = 0;
 
 bool serverReachableRecently = false;
 String serverTimeUtc = "";
@@ -50,6 +54,7 @@ FountainReadings readings;
 FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
+OfflineTimeline offlineTimeline;
 
 bool isWifiConnected()
 {
@@ -64,6 +69,17 @@ void updateWaterReadings()
 void enforceWaterSafety()
 {
   fountainOutputs.enforceWaterSafety(outputs, readings);
+}
+
+void updateOfflineTimelineDetection(unsigned long now)
+{
+  if (now - lastOfflineTimelineCheckAt < OFFLINE_TIMELINE_CHECK_INTERVAL_MS)
+  {
+    return;
+  }
+
+  offlineTimeline.update(dailyTimeline, deviceClock);
+  lastOfflineTimelineCheckAt = now;
 }
 
 void loadCachedConfigIfAvailable()
@@ -577,6 +593,7 @@ void setup()
     lastConfigFetchAt = now;
     lastStateSyncAt = now;
     lastCommandPollAt = now;
+    lastOfflineTimelineCheckAt = now;
   }
 }
 
@@ -588,6 +605,7 @@ void loop()
   // cannot delay pump protection.
   updateWaterReadings();
   enforceWaterSafety();
+  updateOfflineTimelineDetection(now);
 
   if (!isWifiConnected())
   {
