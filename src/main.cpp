@@ -33,7 +33,7 @@ const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 1000;
+const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
 
 unsigned long lastConfigFetchAt = 0;
