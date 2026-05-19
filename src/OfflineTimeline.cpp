@@ -64,9 +64,50 @@ void OfflineTimeline::update(const FountainDailyTimeline &timeline, const Device
   Serial.println(activeRange.endMinute);
 }
 
+bool OfflineTimeline::applyActiveRangeIfNeeded(
+    const FountainDailyTimeline &timeline,
+    const DeviceClock &clock,
+    FountainOutputState &outputs,
+    FountainReadings &readings,
+    FountainOutputs &fountainOutputs)
+{
+  update(timeline, clock);
+
+  if (lastActiveRangeIndex < 0 || lastActiveRangeIndex >= timeline.rangeCount)
+  {
+    return false;
+  }
+
+  if (lastOfflineAppliedRangeIndex == lastActiveRangeIndex)
+  {
+    return false;
+  }
+
+  const FountainTimelineRange &range = timeline.ranges[lastActiveRangeIndex];
+
+  Serial.print("OfflineTimeline applying cached range: ");
+  Serial.print(range.period.length() ? range.period : "unknown");
+  Serial.print(" scene: ");
+  Serial.println(range.sceneName.length() ? range.sceneName : "missing scene");
+
+  bool applied = applyRangeOutputs(range, outputs, readings, fountainOutputs);
+
+  if (applied)
+  {
+    lastOfflineAppliedRangeIndex = lastActiveRangeIndex;
+  }
+
+  return applied;
+}
+
 int OfflineTimeline::activeRangeIndex() const
 {
   return lastActiveRangeIndex;
+}
+
+int OfflineTimeline::lastAppliedRangeIndex() const
+{
+  return lastOfflineAppliedRangeIndex;
 }
 
 bool OfflineTimeline::isRangeActive(const FountainTimelineRange &range, int localMinute) const
@@ -90,4 +131,50 @@ bool OfflineTimeline::isRangeActive(const FountainTimelineRange &range, int loca
 
   // Cross-midnight range, e.g. 23:00 -> 06:00.
   return localMinute >= range.startMinute || localMinute < range.endMinute;
+}
+
+bool OfflineTimeline::applyRangeOutputs(
+    const FountainTimelineRange &range,
+    FountainOutputState &outputs,
+    FountainReadings &readings,
+    FountainOutputs &fountainOutputs)
+{
+  // Reuse the same product-safe output path as dashboard and scene commands.
+  // This keeps water-low pump safety active during offline timeline execution.
+  JsonDocument doc;
+  JsonObject rangeOutputs = doc["outputs"].to<JsonObject>();
+
+  JsonObject pump = rangeOutputs["pump"].to<JsonObject>();
+  pump["enabled"] = range.outputs.pumpEnabled;
+  pump["speed_percent"] = range.outputs.pumpSpeedPercent;
+
+  JsonObject cob = rangeOutputs["cob_light"].to<JsonObject>();
+  cob["enabled"] = range.outputs.cobEnabled;
+  cob["brightness_percent"] = range.outputs.cobBrightnessPercent;
+
+  JsonObject rgb = rangeOutputs["rgb_light"].to<JsonObject>();
+  rgb["enabled"] = range.outputs.rgbEnabled;
+  rgb["brightness_percent"] = range.outputs.rgbBrightnessPercent;
+  rgb["color"] = range.outputs.rgbColor;
+  rgb["effect"] = range.outputs.rgbEffect;
+
+  bool allApplied = true;
+
+  if (!fountainOutputs.applyOutput("pump", rangeOutputs["pump"].as<JsonObject>(), "offline_timeline", outputs, readings))
+  {
+    allApplied = false;
+  }
+
+  if (!fountainOutputs.applyOutput("cob_light", rangeOutputs["cob_light"].as<JsonObject>(), "offline_timeline", outputs, readings))
+  {
+    allApplied = false;
+  }
+
+  if (!fountainOutputs.applyOutput("rgb_light", rangeOutputs["rgb_light"].as<JsonObject>(), "offline_timeline", outputs, readings))
+  {
+    allApplied = false;
+  }
+
+  fountainOutputs.enforceWaterSafety(outputs, readings);
+  return allApplied;
 }
