@@ -26,8 +26,8 @@
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
 // - DeviceClock owns server-time sync and local HH:MM calculation.
-// - OfflineTimeline detects which cached timeline range is active.
-// Later, OfflineTimeline will apply cached range outputs while offline.
+// - OfflineTimeline detects the active range and applies cached outputs only
+//   when Laravel/Wi-Fi/API is unavailable.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -61,6 +61,13 @@ bool isWifiConnected()
   return WiFi.status() == WL_CONNECTED;
 }
 
+bool isOfflineControlMode()
+{
+  // Offline timeline should only change outputs when cloud control is not
+  // available. While Laravel is reachable, dashboard commands remain primary.
+  return !isWifiConnected() || !serverReachableRecently;
+}
+
 void updateWaterReadings()
 {
   waterLevelSensor.update(readings);
@@ -71,14 +78,32 @@ void enforceWaterSafety()
   fountainOutputs.enforceWaterSafety(outputs, readings);
 }
 
-void updateOfflineTimelineDetection(unsigned long now)
+void updateOfflineTimeline(unsigned long now)
 {
   if (now - lastOfflineTimelineCheckAt < OFFLINE_TIMELINE_CHECK_INTERVAL_MS)
   {
     return;
   }
 
-  offlineTimeline.update(dailyTimeline, deviceClock);
+  if (isOfflineControlMode())
+  {
+    bool applied = offlineTimeline.applyActiveRangeIfNeeded(
+        dailyTimeline,
+        deviceClock,
+        outputs,
+        readings,
+        fountainOutputs);
+
+    if (applied)
+    {
+      Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
+    }
+  }
+  else
+  {
+    offlineTimeline.update(dailyTimeline, deviceClock);
+  }
+
   lastOfflineTimelineCheckAt = now;
 }
 
@@ -602,10 +627,10 @@ void loop()
   unsigned long now = millis();
 
   // Local readings and safety run before network work so slow/failing HTTP
-  // cannot delay pump protection.
+  // cannot delay pump protection or cached offline schedule fallback.
   updateWaterReadings();
   enforceWaterSafety();
-  updateOfflineTimelineDetection(now);
+  updateOfflineTimeline(now);
 
   if (!isWifiConnected())
   {
