@@ -25,7 +25,6 @@
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
 // - DeviceClock owns server-time sync and local HH:MM calculation.
-// - ApiClient owns common Laravel URL/header rules.
 // Later, offline timeline should become its own module too.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
@@ -48,6 +47,7 @@ DeviceClock deviceClock;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
+FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 
@@ -80,7 +80,7 @@ void loadCachedConfigIfAvailable()
   Serial.print("Loading cached Laravel config from flash. bytes=");
   Serial.println(cachedConfigJson.length());
 
-  bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs);
+  bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs, dailyTimeline);
 
   if (!parsed)
   {
@@ -231,7 +231,8 @@ bool fetchConfig()
   }
 
   fountainConfig.loadInitialOutputs(config, outputs);
-  fountainConfig.printDailyTimeline(config["daily_timeline"].as<JsonObject>());
+  fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
+  fountainConfig.printDailyTimeline(dailyTimeline);
 
   // Cache only compact firmware data. The full Laravel config is too large for
   // Preferences/NVS and contains dashboard-only fields.
