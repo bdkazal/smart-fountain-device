@@ -5,6 +5,7 @@
 
 #include "ApiClient.h"
 #include "ConfigCache.h"
+#include "DeviceClock.h"
 #include "DeviceSecrets.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
@@ -23,8 +24,9 @@
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
+// - DeviceClock owns server-time sync and local HH:MM calculation.
 // - ApiClient owns common Laravel URL/header rules.
-// Later, offline timeline and UTC/RTC time should become modules too.
+// Later, offline timeline should become its own module too.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
@@ -42,6 +44,7 @@ String serverTimeUtc = "";
 String deviceType = "";
 
 ApiClient apiClient;
+DeviceClock deviceClock;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
@@ -209,6 +212,7 @@ bool fetchConfig()
 
   JsonObject config = doc["config"].as<JsonObject>();
   deviceType = config["device_type"] | "";
+  int timezoneOffsetMinutes = config["timezone_offset_minutes"] | 0;
 
   Serial.print("server_time_utc: ");
   Serial.println(serverTimeUtc.length() ? serverTimeUtc : "missing");
@@ -217,7 +221,9 @@ bool fetchConfig()
   Serial.println(deviceType.length() ? deviceType : "missing");
 
   Serial.print("timezone_offset_minutes: ");
-  Serial.println((int)(config["timezone_offset_minutes"] | 0));
+  Serial.println(timezoneOffsetMinutes);
+
+  deviceClock.syncFromServerTime(serverTimeUtc, timezoneOffsetMinutes);
 
   if (deviceType != "smart_fountain")
   {
