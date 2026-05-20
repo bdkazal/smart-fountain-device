@@ -9,10 +9,13 @@
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 0
 
 // Pump output through LR7843 MOSFET module.
-// Suggested first prototype pin: GPIO4.
-// ACTIVE_HIGH means GPIO HIGH turns the MOSFET/load ON.
+// ACTIVE_HIGH means higher PWM duty turns the MOSFET/load ON.
 #define PUMP_OUTPUT_PIN -1
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
+#define PUMP_PWM_ENABLED 1
+#define PUMP_PWM_CHANNEL 1
+#define PUMP_PWM_FREQUENCY 20000
+#define PUMP_PWM_RESOLUTION_BITS 8
 
 // Float switch / test switch input.
 // Suggested first prototype pin: GPIO1.
