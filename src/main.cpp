@@ -36,6 +36,13 @@ const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
 
+enum CloudControlMode
+{
+  CLOUD_MODE_UNKNOWN,
+  CLOUD_MODE_ONLINE,
+  CLOUD_MODE_OFFLINE
+};
+
 unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
@@ -45,6 +52,7 @@ unsigned long lastOfflineTimelineCheckAt = 0;
 bool serverReachableRecently = false;
 String serverTimeUtc = "";
 String deviceType = "";
+CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
 
 ApiClient apiClient;
 DeviceClock deviceClock;
@@ -66,6 +74,33 @@ bool isOfflineControlMode()
   // Offline timeline should only change outputs when cloud control is not
   // available. While Laravel is reachable, dashboard commands remain primary.
   return !isWifiConnected() || !serverReachableRecently;
+}
+
+void logCloudModeIfChanged()
+{
+  CloudControlMode currentMode = isOfflineControlMode() ? CLOUD_MODE_OFFLINE : CLOUD_MODE_ONLINE;
+
+  if (currentMode == lastLoggedCloudMode)
+  {
+    return;
+  }
+
+  lastLoggedCloudMode = currentMode;
+
+  if (currentMode == CLOUD_MODE_ONLINE)
+  {
+    Serial.println("Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.");
+    return;
+  }
+
+  if (!isWifiConnected())
+  {
+    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, cached local schedule may run.");
+  }
+  else
+  {
+    Serial.println("Cloud mode: OFFLINE - API unavailable, cached local schedule may run.");
+  }
 }
 
 void updateWaterReadings()
@@ -620,6 +655,8 @@ void setup()
     lastCommandPollAt = now;
     lastOfflineTimelineCheckAt = now;
   }
+
+  logCloudModeIfChanged();
 }
 
 void loop()
@@ -630,6 +667,7 @@ void loop()
   // cannot delay pump protection or cached offline schedule fallback.
   updateWaterReadings();
   enforceWaterSafety();
+  logCloudModeIfChanged();
   updateOfflineTimeline(now);
 
   if (!isWifiConnected())
@@ -648,18 +686,21 @@ void loop()
   if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
   {
     fetchConfig();
+    logCloudModeIfChanged();
     lastConfigFetchAt = now;
   }
 
   if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
   {
     postState("device_state");
+    logCloudModeIfChanged();
     lastStateSyncAt = now;
   }
 
   if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
   {
     pollCommands();
+    logCloudModeIfChanged();
     lastCommandPollAt = now;
   }
 
