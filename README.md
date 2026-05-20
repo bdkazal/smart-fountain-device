@@ -26,7 +26,7 @@ Core API and state flow:
 [x] GET /api/device/config
 [x] parse server_time_utc
 [x] parse Smart Fountain config.outputs
-[x] parse and print daily_timeline ranges
+[x] parse daily_timeline ranges into RAM structs
 [x] POST /api/device/state
 [x] GET /api/device/commands
 [x] ACK command as acknowledged
@@ -36,7 +36,7 @@ Core API and state flow:
 [x] report actual hardware/output state as final truth
 ```
 
-Safety and cache:
+Safety, cache, and offline behavior:
 
 ```text
 [x] local water_low pump safety
@@ -46,7 +46,12 @@ Safety and cache:
 [x] cache loads before Wi-Fi/API fetch
 [x] cache avoids unnecessary flash writes when unchanged
 [x] cached daily_timeline ranges include output states
-[x] foundation ready for offline timeline execution
+[x] DeviceClock parses server_time_utc and local timezone offset
+[x] OfflineTimeline detects active daily range
+[x] OfflineTimeline applies cached range outputs when API/cloud is unavailable
+[x] cloud mode logging: ONLINE / OFFLINE
+[x] offline API retry backoff to reduce socket-error spam
+[x] recovery: actual locally-applied state syncs after Laravel returns
 ```
 
 Hardware still pending:
@@ -63,8 +68,8 @@ Hardware still pending:
 Next firmware modules:
 
 ```text
-[ ] DeviceClock: server UTC + timezone offset + millis-based clock
-[ ] OfflineTimeline: use cached timeline to apply outputs without Laravel
+[x] DeviceClock: server UTC + timezone offset + millis-based clock
+[x] OfflineTimeline: use cached timeline to apply outputs without Laravel
 [ ] HardwareOutputs: real pump / COB / RGB drivers
 [ ] WaterLevelSensor: ADC calibration and filtering
 [ ] API extraction: state reporter, command client, command processor
@@ -121,11 +126,13 @@ GET /api/device/config
 Config HTTP status: 200
 server_time_utc: ...
 device_type: smart_fountain
+DeviceClock synced. Local time: ...
 Daily timeline repeat: daily
 Compact config cache JSON length: ...
 Config cache unchanged. Flash write skipped.
 POST /api/device/state
 GET /api/device/commands
+Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
 ```
 
 First boot after empty cache should show:
@@ -136,6 +143,66 @@ GET /api/device/config
 Compact config cache JSON length: ...
 Config cache saved to flash. bytes=...
 ```
+
+## Online / offline behavior
+
+When Laravel/API is reachable, dashboard/API control remains primary:
+
+```text
+Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
+OfflineTimeline active range: day scene: Day Fountain local_time=15:31 range=360->1050
+```
+
+In online mode, OfflineTimeline only detects the active range. It does **not** apply cached outputs while Laravel is healthy.
+
+When Laravel/API becomes unavailable but Wi-Fi is still connected:
+
+```text
+Cloud mode: OFFLINE - API unavailable, cached local schedule may run.
+OfflineTimeline applying cached range: day scene: Day Fountain
+Pump state applied from offline_timeline: enabled=true speed=60
+COB state applied from offline_timeline: enabled=true brightness=40
+RGB state applied from offline_timeline: enabled=true brightness=35 color=#FFB066 effect=warm_glow
+OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.
+```
+
+When Laravel/API recovers, the firmware syncs the actual locally-applied state back to Laravel:
+
+```text
+State HTTP status: 200
+State synced.
+Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
+```
+
+Verified recovery state example:
+
+```text
+pump=true speed=60
+cob_light=true brightness=40
+rgb_light=true brightness=35 color=#FFB066 effect=warm_glow
+```
+
+## API retry intervals
+
+Online mode:
+
+```text
+state sync: 5 seconds
+command poll: 5 seconds
+config fetch: 60 seconds
+```
+
+Offline/API-unavailable mode:
+
+```text
+state retry: 30 seconds
+command retry: 30 seconds
+config retry: 30 seconds
+offline timeline check: 30 seconds
+local water safety: always active
+```
+
+This keeps development responsive while online, but reduces repeated socket-error logs while Laravel/API is unavailable.
 
 ## Safety rule
 
@@ -186,35 +253,49 @@ Latest verified cache size during development:
 Compact config cache JSON length: 1228
 ```
 
-## Offline timeline readiness
+## Offline timeline behavior
 
 The current Laravel config response includes output states inside each daily timeline range. Serial output confirms:
 
 ```text
-- day 06:00 -> 17:30 scene: Day Fountain outputs: yes
-- evening 17:30 -> 23:00 scene: Night Glow outputs: yes
-- night 23:00 -> 06:00 scene: All Off outputs: yes
+- day 360 -> 1050 scene: Day Fountain outputs: yes
+- evening 1050 -> 1380 scene: Night Glow outputs: yes
+- night 1380 -> 360 scene: All Off outputs: yes
 ```
 
-That means the cached timeline is apply-ready. The remaining missing part is a reliable device clock, then the OfflineTimeline module can apply ranges locally.
+The `night` range crosses midnight, so firmware treats it as:
+
+```text
+active when local_time >= 23:00 OR local_time < 06:00
+```
+
+OfflineTimeline only applies cached outputs when cloud/API is unavailable. This avoids fighting dashboard commands while Laravel is online.
 
 ## Main firmware modules
 
 ```text
 src/main.cpp
-  Boot/runtime loop, Wi-Fi, high-level API flow, state sync, command polling.
+  Boot/runtime loop, Wi-Fi, high-level API flow, state sync, command polling, cloud-mode gating.
 
 include/ApiClient.h
 src/ApiClient.cpp
   Laravel base URL normalization and common device API headers.
 
+include/DeviceClock.h
+src/DeviceClock.cpp
+  Parses server_time_utc, applies timezone offset, exposes local HH:MM/minutes.
+
 include/FountainConfig.h
 src/FountainConfig.cpp
-  Config parsing, compact cache building, daily timeline printing.
+  Config parsing, compact cache building, daily timeline loading into RAM structs.
 
 include/ConfigCache.h
 src/ConfigCache.cpp
   ESP32 Preferences/NVS storage for compact firmware config.
+
+include/OfflineTimeline.h
+src/OfflineTimeline.cpp
+  Detects active daily timeline range and applies cached range outputs while offline.
 
 include/FountainOutputs.h
 src/FountainOutputs.cpp
@@ -225,7 +306,7 @@ src/WaterLevelSensor.cpp
   Simulated water-level readings for now; later real ADC sensor logic.
 
 include/FountainTypes.h
-  Shared output/readings structs.
+  Shared output/readings/timeline structs.
 ```
 
 ## Current limitations
@@ -233,7 +314,7 @@ include/FountainTypes.h
 ```text
 - Output state is software-only until hardware pins are wired.
 - Water sensor is simulated until ADC hardware is connected.
-- Offline schedule cannot run until DeviceClock exists.
-- Cached timeline is ready, but OfflineTimeline module is not implemented yet.
+- Offline schedule depends on last successful server_time_utc sync.
 - No RTC fallback yet.
+- API code is still mostly in main.cpp and should later be extracted.
 ```
