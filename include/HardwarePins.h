@@ -16,9 +16,9 @@
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
 
 // Pump output through LR7843 MOSFET module.
-// Wiring: GPIO4 -> LR7843 signal/input.
+// Wiring: GPIO5 -> LR7843 signal/input.
 // ACTIVE_HIGH means GPIO HIGH turns the pump MOSFET/load ON.
-#define PUMP_OUTPUT_PIN 4
+#define PUMP_OUTPUT_PIN 5
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 
 // Float switch / temporary normal switch input.
