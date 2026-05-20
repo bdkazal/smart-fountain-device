@@ -11,6 +11,8 @@
 // Pump output through LR7843 MOSFET module.
 // ACTIVE_HIGH means higher PWM duty turns the MOSFET/load ON.
 // 0% is OFF. 1-9% are clamped to 10%. 10-100% use direct PWM duty.
+// Low-speed assist can periodically kick the pump at very low speeds so it
+// keeps running without using a constant stronger duty.
 #define PUMP_OUTPUT_PIN -1
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 1
@@ -21,6 +23,11 @@
 #define PUMP_PWM_MAX_DUTY_PERCENT 100
 #define PUMP_STARTUP_BOOST_DUTY_PERCENT 100
 #define PUMP_STARTUP_BOOST_MS 700
+#define PUMP_LOW_ASSIST_ENABLED 1
+#define PUMP_LOW_ASSIST_MAX_SPEED_PERCENT 10
+#define PUMP_LOW_ASSIST_DUTY_PERCENT 100
+#define PUMP_LOW_ASSIST_KICK_MS 80
+#define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / test switch input.
 // Suggested first prototype pin: GPIO1.
