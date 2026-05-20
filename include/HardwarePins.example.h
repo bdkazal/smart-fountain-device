@@ -14,8 +14,12 @@
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 1
 #define PUMP_PWM_CHANNEL 1
-#define PUMP_PWM_FREQUENCY 20000
+#define PUMP_PWM_FREQUENCY 1000
 #define PUMP_PWM_RESOLUTION_BITS 8
+#define PUMP_PWM_MIN_DUTY_PERCENT 10
+#define PUMP_PWM_MAX_DUTY_PERCENT 100
+#define PUMP_STARTUP_BOOST_DUTY_PERCENT 100
+#define PUMP_STARTUP_BOOST_MS 700
 
 // Float switch / test switch input.
 // Suggested first prototype pin: GPIO1.
