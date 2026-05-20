@@ -77,8 +77,25 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
   bool gpioOn = PUMP_OUTPUT_ACTIVE_HIGH == 1;
   int onLevel = gpioOn ? HIGH : LOW;
   int offLevel = gpioOn ? LOW : HIGH;
+  bool pumpOn = outputs.pumpEnabled && outputs.pumpSpeedPercent > 0;
+  int outputLevel = pumpOn ? onLevel : offLevel;
 
-  digitalWrite(PUMP_OUTPUT_PIN, outputs.pumpEnabled ? onLevel : offLevel);
+  digitalWrite(PUMP_OUTPUT_PIN, outputLevel);
+
+  if (!hasLoggedPumpLevel || lastPumpOn != pumpOn)
+  {
+    Serial.print("HardwareOutputs pump GPIO");
+    Serial.print(PUMP_OUTPUT_PIN);
+    Serial.print(" -> ");
+    Serial.print(outputLevel == HIGH ? "HIGH" : "LOW");
+    Serial.print(" pump=");
+    Serial.print(pumpOn ? "ON" : "OFF");
+    Serial.print(" speed=");
+    Serial.println(outputs.pumpSpeedPercent);
+
+    hasLoggedPumpLevel = true;
+    lastPumpOn = pumpOn;
+  }
 }
 
 void HardwareOutputs::applyCob(const FountainOutputState &outputs)
