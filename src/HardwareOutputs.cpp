@@ -6,6 +6,10 @@
 #include "HardwarePins.example.h"
 #endif
 
+#ifndef PUMP_OUTPUT_ACTIVE_HIGH
+#define PUMP_OUTPUT_ACTIVE_HIGH 1
+#endif
+
 void HardwareOutputs::begin()
 {
   hardwareEnabled = SMART_FOUNTAIN_HARDWARE_ENABLED == 1;
@@ -19,9 +23,11 @@ void HardwareOutputs::begin()
   if (PUMP_OUTPUT_PIN >= 0)
   {
     pinMode(PUMP_OUTPUT_PIN, OUTPUT);
-    digitalWrite(PUMP_OUTPUT_PIN, LOW);
+    digitalWrite(PUMP_OUTPUT_PIN, PUMP_OUTPUT_ACTIVE_HIGH == 1 ? LOW : HIGH);
     Serial.print("HardwareOutputs pump pin ready: GPIO ");
-    Serial.println(PUMP_OUTPUT_PIN);
+    Serial.print(PUMP_OUTPUT_PIN);
+    Serial.print(" active_");
+    Serial.println(PUMP_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
   }
   else
   {
@@ -68,9 +74,11 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     return;
   }
 
-  // LR7843 MOSFET module is treated as active-HIGH for V1 until hardware test
-  // proves otherwise. If the module behaves differently, change this driver only.
-  digitalWrite(PUMP_OUTPUT_PIN, outputs.pumpEnabled ? HIGH : LOW);
+  bool gpioOn = PUMP_OUTPUT_ACTIVE_HIGH == 1;
+  int onLevel = gpioOn ? HIGH : LOW;
+  int offLevel = gpioOn ? LOW : HIGH;
+
+  digitalWrite(PUMP_OUTPUT_PIN, outputs.pumpEnabled ? onLevel : offLevel);
 }
 
 void HardwareOutputs::applyCob(const FountainOutputState &outputs)
