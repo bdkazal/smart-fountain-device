@@ -42,6 +42,26 @@
 #define PUMP_STARTUP_BOOST_MS 700
 #endif
 
+#ifndef PUMP_LOW_ASSIST_ENABLED
+#define PUMP_LOW_ASSIST_ENABLED 0
+#endif
+
+#ifndef PUMP_LOW_ASSIST_MAX_SPEED_PERCENT
+#define PUMP_LOW_ASSIST_MAX_SPEED_PERCENT 10
+#endif
+
+#ifndef PUMP_LOW_ASSIST_DUTY_PERCENT
+#define PUMP_LOW_ASSIST_DUTY_PERCENT 100
+#endif
+
+#ifndef PUMP_LOW_ASSIST_KICK_MS
+#define PUMP_LOW_ASSIST_KICK_MS 80
+#endif
+
+#ifndef PUMP_LOW_ASSIST_INTERVAL_MS
+#define PUMP_LOW_ASSIST_INTERVAL_MS 2000
+#endif
+
 void HardwareOutputs::begin()
 {
   hardwareEnabled = SMART_FOUNTAIN_HARDWARE_ENABLED == 1;
@@ -73,7 +93,9 @@ void HardwareOutputs::begin()
       Serial.print(" max=");
       Serial.print(PUMP_PWM_MAX_DUTY_PERCENT);
       Serial.print(" boost_ms=");
-      Serial.println(PUMP_STARTUP_BOOST_MS);
+      Serial.print(PUMP_STARTUP_BOOST_MS);
+      Serial.print(" low_assist=");
+      Serial.println(PUMP_LOW_ASSIST_ENABLED == 1 ? "on" : "off");
     }
     else
     {
@@ -152,24 +174,53 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     {
       pumpStartupBoostActive = PUMP_STARTUP_BOOST_MS > 0;
       pumpStartupBoostUntil = millis() + PUMP_STARTUP_BOOST_MS;
+      lastPumpAssistKickAt = millis();
     }
 
     if (!pumpOn)
     {
       pumpStartupBoostActive = false;
       pumpStartupBoostUntil = 0;
+      lastPumpAssistKickAt = 0;
     }
 
-    bool boostActiveNow = pumpStartupBoostActive && millis() < pumpStartupBoostUntil;
+    unsigned long now = millis();
+    bool boostActiveNow = pumpStartupBoostActive && now < pumpStartupBoostUntil;
 
     if (pumpStartupBoostActive && !boostActiveNow)
     {
       pumpStartupBoostActive = false;
     }
 
-    int appliedDutyPercent = boostActiveNow
-                                 ? constrain(PUMP_STARTUP_BOOST_DUTY_PERCENT, 0, 100)
-                                 : mappedDutyPercent;
+    bool lowAssistActiveNow = false;
+
+    if (PUMP_LOW_ASSIST_ENABLED == 1 &&
+        pumpOn &&
+        !boostActiveNow &&
+        requestedSpeedPercent <= PUMP_LOW_ASSIST_MAX_SPEED_PERCENT)
+    {
+      unsigned long elapsedSinceKick = now - lastPumpAssistKickAt;
+
+      if (elapsedSinceKick >= PUMP_LOW_ASSIST_INTERVAL_MS)
+      {
+        lastPumpAssistKickAt = now;
+        elapsedSinceKick = 0;
+      }
+
+      lowAssistActiveNow = elapsedSinceKick < PUMP_LOW_ASSIST_KICK_MS;
+    }
+
+    int appliedDutyPercent = mappedDutyPercent;
+
+    if (boostActiveNow)
+    {
+      appliedDutyPercent = constrain(PUMP_STARTUP_BOOST_DUTY_PERCENT, 0, 100);
+    }
+    else if (lowAssistActiveNow)
+    {
+      appliedDutyPercent = constrain(PUMP_LOW_ASSIST_DUTY_PERCENT, 0, 100);
+    }
+
     int duty = map(appliedDutyPercent, 0, 100, 0, dutyMax);
 
     if (PUMP_OUTPUT_ACTIVE_HIGH != 1)
@@ -183,7 +234,8 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     if (!hasLoggedPumpLevel ||
         lastPumpOn != pumpOn ||
         lastPumpSpeedPercent != requestedSpeedPercent ||
-        lastPumpDuty != duty)
+        lastPumpDuty != duty ||
+        lastPumpAssistActive != lowAssistActiveNow)
     {
       Serial.print("HardwareOutputs pump GPIO");
       Serial.print(PUMP_OUTPUT_PIN);
@@ -198,12 +250,15 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
       Serial.print(" mapped_duty_percent=");
       Serial.print(mappedDutyPercent);
       Serial.print(" boost=");
-      Serial.println(boostActiveNow ? "yes" : "no");
+      Serial.print(boostActiveNow ? "yes" : "no");
+      Serial.print(" assist=");
+      Serial.println(lowAssistActiveNow ? "yes" : "no");
 
       hasLoggedPumpLevel = true;
       lastPumpOn = pumpOn;
       lastPumpSpeedPercent = requestedSpeedPercent;
       lastPumpDuty = duty;
+      lastPumpAssistActive = lowAssistActiveNow;
     }
 
     return;
