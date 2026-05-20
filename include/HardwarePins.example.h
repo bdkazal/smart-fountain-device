@@ -10,7 +10,9 @@
 
 // Pump output through LR7843 MOSFET module.
 // Suggested first prototype pin: GPIO4.
+// ACTIVE_HIGH means GPIO HIGH turns the MOSFET/load ON.
 #define PUMP_OUTPUT_PIN -1
+#define PUMP_OUTPUT_ACTIVE_HIGH 1
 
 // Float switch / test switch input.
 // Suggested first prototype pin: GPIO1.
@@ -19,6 +21,7 @@
 #define WATER_LEVEL_SWITCH_PIN -1
 #define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
+#define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
 
 // COB light PWM output.
 // TBD: choose final ESP32-C3 GPIO and current-limited driver circuit.
