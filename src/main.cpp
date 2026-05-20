@@ -10,6 +10,7 @@
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
+#include "HardwareOutputs.h"
 #include "OfflineTimeline.h"
 #include "WaterLevelSensor.h"
 
@@ -23,6 +24,7 @@
 // isolated home are moving out of this file step by step:
 // - WaterLevelSensor owns water reading/simulation for now.
 // - FountainOutputs owns pump/COB/RGB state application and local pump safety.
+// - HardwareOutputs owns physical GPIO/PWM writes when real hardware is enabled.
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
 // - DeviceClock owns server-time sync and local HH:MM calculation.
@@ -63,6 +65,7 @@ FountainReadings readings;
 FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
+HardwareOutputs hardwareOutputs;
 OfflineTimeline offlineTimeline;
 
 bool isWifiConnected()
@@ -82,6 +85,12 @@ unsigned long activeApiInterval(unsigned long normalInterval)
   // Keep fast 5s API cadence while online. When Laravel/API is unavailable,
   // slow retries to reduce socket-error spam while local safety/timeline continue.
   return isOfflineControlMode() ? OFFLINE_API_RETRY_INTERVAL_MS : normalInterval;
+}
+
+void syncHardwareOutputs()
+{
+  // Safe no-op until SMART_FOUNTAIN_HARDWARE_ENABLED is set to 1 in HardwarePins.h.
+  hardwareOutputs.apply(outputs);
 }
 
 void logCloudModeIfChanged()
@@ -119,6 +128,7 @@ void updateWaterReadings()
 void enforceWaterSafety()
 {
   fountainOutputs.enforceWaterSafety(outputs, readings);
+  syncHardwareOutputs();
 }
 
 void updateOfflineTimeline(unsigned long now)
@@ -139,6 +149,7 @@ void updateOfflineTimeline(unsigned long now)
 
     if (applied)
     {
+      syncHardwareOutputs();
       Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
     }
   }
@@ -172,6 +183,7 @@ void loadCachedConfigIfAvailable()
     return;
   }
 
+  syncHardwareOutputs();
   Serial.println("Cached Laravel config loaded.");
 }
 
@@ -315,6 +327,7 @@ bool fetchConfig()
   }
 
   fountainConfig.loadInitialOutputs(config, outputs);
+  syncHardwareOutputs();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
@@ -490,7 +503,9 @@ bool handleOutputSet(JsonObject payload)
   }
 
   updateWaterReadings();
-  return fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
+  bool applied = fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
+  syncHardwareOutputs();
+  return applied;
 }
 
 bool handleSceneApply(JsonObject payload)
@@ -519,6 +534,7 @@ bool handleSceneApply(JsonObject payload)
   }
 
   enforceWaterSafety();
+  syncHardwareOutputs();
   return allApplied;
 }
 
@@ -642,6 +658,7 @@ void setup()
 
   beginConfigCache();
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
+  hardwareOutputs.begin();
   waterLevelSensor.begin();
   updateWaterReadings();
 
