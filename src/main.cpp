@@ -93,6 +93,16 @@ void syncHardwareOutputs()
   hardwareOutputs.apply(outputs);
 }
 
+void applySafetyAndSyncHardware()
+{
+  // The only safe path to physical outputs: refresh water reading first, enforce
+  // pump safety, then write GPIO/PWM. This prevents cached/cloud pump ON state
+  // from briefly reaching hardware when the float switch says low water.
+  updateWaterReadings();
+  fountainOutputs.enforceWaterSafety(outputs, readings);
+  syncHardwareOutputs();
+}
+
 void logCloudModeIfChanged()
 {
   CloudControlMode currentMode = isOfflineControlMode() ? CLOUD_MODE_OFFLINE : CLOUD_MODE_ONLINE;
@@ -149,7 +159,7 @@ void updateOfflineTimeline(unsigned long now)
 
     if (applied)
     {
-      syncHardwareOutputs();
+      applySafetyAndSyncHardware();
       Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
     }
   }
@@ -183,7 +193,7 @@ void loadCachedConfigIfAvailable()
     return;
   }
 
-  syncHardwareOutputs();
+  applySafetyAndSyncHardware();
   Serial.println("Cached Laravel config loaded.");
 }
 
@@ -327,7 +337,7 @@ bool fetchConfig()
   }
 
   fountainConfig.loadInitialOutputs(config, outputs);
-  syncHardwareOutputs();
+  applySafetyAndSyncHardware();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
@@ -504,7 +514,7 @@ bool handleOutputSet(JsonObject payload)
 
   updateWaterReadings();
   bool applied = fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
-  syncHardwareOutputs();
+  applySafetyAndSyncHardware();
   return applied;
 }
 
@@ -533,8 +543,7 @@ bool handleSceneApply(JsonObject payload)
     }
   }
 
-  enforceWaterSafety();
-  syncHardwareOutputs();
+  applySafetyAndSyncHardware();
   return allApplied;
 }
 
