@@ -32,6 +32,7 @@
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
+const unsigned long OFFLINE_API_RETRY_INTERVAL_MS = 30000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
@@ -74,6 +75,13 @@ bool isOfflineControlMode()
   // Offline timeline should only change outputs when cloud control is not
   // available. While Laravel is reachable, dashboard commands remain primary.
   return !isWifiConnected() || !serverReachableRecently;
+}
+
+unsigned long activeApiInterval(unsigned long normalInterval)
+{
+  // Keep fast 5s API cadence while online. When Laravel/API is unavailable,
+  // slow retries to reduce socket-error spam while local safety/timeline continue.
+  return isOfflineControlMode() ? OFFLINE_API_RETRY_INTERVAL_MS : normalInterval;
 }
 
 void logCloudModeIfChanged()
@@ -683,21 +691,25 @@ void loop()
     return;
   }
 
-  if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
+  unsigned long configInterval = activeApiInterval(CONFIG_FETCH_INTERVAL_MS);
+  unsigned long stateInterval = activeApiInterval(STATE_SYNC_INTERVAL_MS);
+  unsigned long commandInterval = activeApiInterval(COMMAND_POLL_INTERVAL_MS);
+
+  if (now - lastConfigFetchAt >= configInterval)
   {
     fetchConfig();
     logCloudModeIfChanged();
     lastConfigFetchAt = now;
   }
 
-  if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
+  if (now - lastStateSyncAt >= stateInterval)
   {
     postState("device_state");
     logCloudModeIfChanged();
     lastStateSyncAt = now;
   }
 
-  if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
+  if (now - lastCommandPollAt >= commandInterval)
   {
     pollCommands();
     logCloudModeIfChanged();
