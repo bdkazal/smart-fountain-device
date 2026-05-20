@@ -21,9 +21,9 @@
 //
 // Calibration note from real pump test:
 // - 0% is OFF.
-// - 1-9% are clamped to 10% so the pump never receives weaker running duty.
-// - 10%, 11%, 15%, and 100% are the useful comparison points for this pump.
-// - A 700ms startup boost helps the pump start before dropping to low duty.
+// - 10% is visually gentler than 11%, but can stop after running for a while.
+// - Low-speed assist gives short periodic kicks while selected speed is low.
+// - 11%, 15%, and 100% are useful comparison points for this pump.
 #define PUMP_OUTPUT_PIN 5
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 1
@@ -34,6 +34,11 @@
 #define PUMP_PWM_MAX_DUTY_PERCENT 100
 #define PUMP_STARTUP_BOOST_DUTY_PERCENT 100
 #define PUMP_STARTUP_BOOST_MS 700
+#define PUMP_LOW_ASSIST_ENABLED 1
+#define PUMP_LOW_ASSIST_MAX_SPEED_PERCENT 10
+#define PUMP_LOW_ASSIST_DUTY_PERCENT 100
+#define PUMP_LOW_ASSIST_KICK_MS 80
+#define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / temporary normal switch input.
 // Wiring: GPIO1 -> switch -> GND.
