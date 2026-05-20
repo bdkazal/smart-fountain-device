@@ -10,11 +10,12 @@
 
 // Pump output through LR7843 MOSFET module.
 // ACTIVE_HIGH means higher PWM duty turns the MOSFET/load ON.
+// 0% is OFF. 1-9% are clamped to 10%. 10-100% use direct PWM duty.
 #define PUMP_OUTPUT_PIN -1
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 1
 #define PUMP_PWM_CHANNEL 1
-#define PUMP_PWM_FREQUENCY 1000
+#define PUMP_PWM_FREQUENCY 20000
 #define PUMP_PWM_RESOLUTION_BITS 8
 #define PUMP_PWM_MIN_DUTY_PERCENT 10
 #define PUMP_PWM_MAX_DUTY_PERCENT 100
