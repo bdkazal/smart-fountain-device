@@ -68,6 +68,11 @@ FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 OfflineTimeline offlineTimeline;
 
+// Forward declarations for helpers used before their definitions.
+void updateWaterReadings();
+void syncHardwareOutputs();
+void applySafetyAndSyncHardware();
+
 bool isWifiConnected()
 {
   return WiFi.status() == WL_CONNECTED;
