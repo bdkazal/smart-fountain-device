@@ -20,14 +20,15 @@
 // ACTIVE_HIGH means higher PWM duty turns the pump MOSFET/load ON.
 //
 // Calibration note from real pump test:
-// - 10% is the minimum target running duty.
-// - 11%, 15%, and 100% are useful comparison points for this pump.
-// - A 700ms startup boost helps the pump start reliably before dropping to 10%.
+// - 0% is OFF.
+// - 1-9% are clamped to 10% so the pump never receives weaker running duty.
+// - 10%, 11%, 15%, and 100% are the useful comparison points for this pump.
+// - A 700ms startup boost helps the pump start before dropping to low duty.
 #define PUMP_OUTPUT_PIN 5
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 1
 #define PUMP_PWM_CHANNEL 1
-#define PUMP_PWM_FREQUENCY 1000
+#define PUMP_PWM_FREQUENCY 20000
 #define PUMP_PWM_RESOLUTION_BITS 8
 #define PUMP_PWM_MIN_DUTY_PERCENT 10
 #define PUMP_PWM_MAX_DUTY_PERCENT 100
