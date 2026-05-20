@@ -9,11 +9,19 @@
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 0
 
 // Pump output through LR7843 MOSFET module.
-// TBD: choose final ESP32-C3 GPIO after wiring review.
+// Suggested first prototype pin: GPIO4.
 #define PUMP_OUTPUT_PIN -1
 
+// Float switch / test switch input.
+// Suggested first prototype pin: GPIO1.
+// Wiring: GPIO -> switch -> GND, using ESP32 internal pull-up.
+// ACTIVE_LOW means closed switch reads LOW and becomes water_low=true.
+#define WATER_LEVEL_SWITCH_PIN -1
+#define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
+#define WATER_LEVEL_SWITCH_USE_PULLUP 1
+
 // COB light PWM output.
-// TBD: choose final ESP32-C3 GPIO and driver circuit.
+// TBD: choose final ESP32-C3 GPIO and current-limited driver circuit.
 #define COB_PWM_PIN -1
 #define COB_PWM_CHANNEL 0
 #define COB_PWM_FREQUENCY 5000
