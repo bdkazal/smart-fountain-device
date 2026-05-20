@@ -10,6 +10,22 @@
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #endif
 
+#ifndef PUMP_PWM_ENABLED
+#define PUMP_PWM_ENABLED 0
+#endif
+
+#ifndef PUMP_PWM_CHANNEL
+#define PUMP_PWM_CHANNEL 1
+#endif
+
+#ifndef PUMP_PWM_FREQUENCY
+#define PUMP_PWM_FREQUENCY 20000
+#endif
+
+#ifndef PUMP_PWM_RESOLUTION_BITS
+#define PUMP_PWM_RESOLUTION_BITS 8
+#endif
+
 void HardwareOutputs::begin()
 {
   hardwareEnabled = SMART_FOUNTAIN_HARDWARE_ENABLED == 1;
@@ -22,12 +38,30 @@ void HardwareOutputs::begin()
 
   if (PUMP_OUTPUT_PIN >= 0)
   {
-    pinMode(PUMP_OUTPUT_PIN, OUTPUT);
-    digitalWrite(PUMP_OUTPUT_PIN, PUMP_OUTPUT_ACTIVE_HIGH == 1 ? LOW : HIGH);
-    Serial.print("HardwareOutputs pump pin ready: GPIO ");
-    Serial.print(PUMP_OUTPUT_PIN);
-    Serial.print(" active_");
-    Serial.println(PUMP_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    if (PUMP_PWM_ENABLED == 1)
+    {
+      ledcSetup(PUMP_PWM_CHANNEL, PUMP_PWM_FREQUENCY, PUMP_PWM_RESOLUTION_BITS);
+      ledcAttachPin(PUMP_OUTPUT_PIN, PUMP_PWM_CHANNEL);
+      ledcWrite(PUMP_PWM_CHANNEL, PUMP_OUTPUT_ACTIVE_HIGH == 1 ? 0 : ((1 << PUMP_PWM_RESOLUTION_BITS) - 1));
+
+      Serial.print("HardwareOutputs pump PWM ready: GPIO ");
+      Serial.print(PUMP_OUTPUT_PIN);
+      Serial.print(" channel=");
+      Serial.print(PUMP_PWM_CHANNEL);
+      Serial.print(" freq=");
+      Serial.print(PUMP_PWM_FREQUENCY);
+      Serial.print("Hz active_");
+      Serial.println(PUMP_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    }
+    else
+    {
+      pinMode(PUMP_OUTPUT_PIN, OUTPUT);
+      digitalWrite(PUMP_OUTPUT_PIN, PUMP_OUTPUT_ACTIVE_HIGH == 1 ? LOW : HIGH);
+      Serial.print("HardwareOutputs pump pin ready: GPIO ");
+      Serial.print(PUMP_OUTPUT_PIN);
+      Serial.print(" active_");
+      Serial.println(PUMP_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    }
   }
   else
   {
@@ -74,10 +108,44 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     return;
   }
 
+  bool pumpOn = outputs.pumpEnabled && outputs.pumpSpeedPercent > 0;
+  int speedPercent = pumpOn ? constrain(outputs.pumpSpeedPercent, 0, 100) : 0;
+
+  if (PUMP_PWM_ENABLED == 1)
+  {
+    int dutyMax = (1 << PUMP_PWM_RESOLUTION_BITS) - 1;
+    int duty = map(speedPercent, 0, 100, 0, dutyMax);
+
+    if (PUMP_OUTPUT_ACTIVE_HIGH != 1)
+    {
+      duty = dutyMax - duty;
+    }
+
+    ledcWrite(PUMP_PWM_CHANNEL, constrain(duty, 0, dutyMax));
+
+    if (!hasLoggedPumpLevel || lastPumpOn != pumpOn)
+    {
+      Serial.print("HardwareOutputs pump GPIO");
+      Serial.print(PUMP_OUTPUT_PIN);
+      Serial.print(" PWM duty=");
+      Serial.print(duty);
+      Serial.print("/");
+      Serial.print(dutyMax);
+      Serial.print(" pump=");
+      Serial.print(pumpOn ? "ON" : "OFF");
+      Serial.print(" speed=");
+      Serial.println(speedPercent);
+
+      hasLoggedPumpLevel = true;
+      lastPumpOn = pumpOn;
+    }
+
+    return;
+  }
+
   bool gpioOn = PUMP_OUTPUT_ACTIVE_HIGH == 1;
   int onLevel = gpioOn ? HIGH : LOW;
   int offLevel = gpioOn ? LOW : HIGH;
-  bool pumpOn = outputs.pumpEnabled && outputs.pumpSpeedPercent > 0;
   int outputLevel = pumpOn ? onLevel : offLevel;
 
   digitalWrite(PUMP_OUTPUT_PIN, outputLevel);
@@ -91,7 +159,7 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     Serial.print(" pump=");
     Serial.print(pumpOn ? "ON" : "OFF");
     Serial.print(" speed=");
-    Serial.println(outputs.pumpSpeedPercent);
+    Serial.println(speedPercent);
 
     hasLoggedPumpLevel = true;
     lastPumpOn = pumpOn;
