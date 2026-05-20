@@ -17,27 +17,27 @@
 
 // Pump output through LR7843 MOSFET module.
 // Wiring: GPIO5 -> LR7843 signal/input.
-// ACTIVE_HIGH means higher PWM duty turns the pump MOSFET/load ON.
+// ACTIVE_HIGH means GPIO HIGH turns the pump MOSFET/load ON.
 //
-// Calibration note from real pump test:
-// - 0% is OFF.
-// - 10% is visually gentler than 11%, but can stop after running for a while.
-// - Low-speed assist gives short periodic kicks while selected speed is low.
-// - 11%, 15%, and 100% are useful comparison points for this pump.
+// Real hardware finding:
+// - The small pump has a very narrow useful PWM range.
+// - 10% can stall after some time.
+// - Low-speed assist caused pulsed water and MOSFET heating.
+// - For V1 safety, keep pump ON/OFF only until a proper pump driver strategy is chosen.
 #define PUMP_OUTPUT_PIN 5
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
-#define PUMP_PWM_ENABLED 1
+#define PUMP_PWM_ENABLED 0
 #define PUMP_PWM_CHANNEL 1
 #define PUMP_PWM_FREQUENCY 20000
 #define PUMP_PWM_RESOLUTION_BITS 8
 #define PUMP_PWM_MIN_DUTY_PERCENT 10
 #define PUMP_PWM_MAX_DUTY_PERCENT 100
 #define PUMP_STARTUP_BOOST_DUTY_PERCENT 100
-#define PUMP_STARTUP_BOOST_MS 700
-#define PUMP_LOW_ASSIST_ENABLED 1
+#define PUMP_STARTUP_BOOST_MS 0
+#define PUMP_LOW_ASSIST_ENABLED 0
 #define PUMP_LOW_ASSIST_MAX_SPEED_PERCENT 10
 #define PUMP_LOW_ASSIST_DUTY_PERCENT 100
-#define PUMP_LOW_ASSIST_KICK_MS 80
+#define PUMP_LOW_ASSIST_KICK_MS 0
 #define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / temporary normal switch input.
