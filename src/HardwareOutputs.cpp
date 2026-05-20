@@ -19,7 +19,7 @@
 #endif
 
 #ifndef PUMP_PWM_FREQUENCY
-#define PUMP_PWM_FREQUENCY 1000
+#define PUMP_PWM_FREQUENCY 20000
 #endif
 
 #ifndef PUMP_PWM_RESOLUTION_BITS
@@ -142,7 +142,10 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
 
     if (pumpOn)
     {
-      mappedDutyPercent = map(requestedSpeedPercent, 1, 100, minDutyPercent, maxDutyPercent);
+      // Direct pump calibration: dashboard speed is the actual PWM duty percent.
+      // Only 1-9 are clamped up to the minimum so the pump is not asked to run
+      // below its observed usable range.
+      mappedDutyPercent = constrain(requestedSpeedPercent, minDutyPercent, maxDutyPercent);
     }
 
     if (pumpOn && !lastPumpOn)
