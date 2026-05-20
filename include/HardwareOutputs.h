@@ -21,10 +21,12 @@ private:
   bool hardwareEnabled = false;
   bool hasLoggedPumpLevel = false;
   bool lastPumpOn = false;
+  bool lastPumpAssistActive = false;
   int lastPumpSpeedPercent = -1;
   int lastPumpDuty = -1;
   bool pumpStartupBoostActive = false;
   unsigned long pumpStartupBoostUntil = 0;
+  unsigned long lastPumpAssistKickAt = 0;
 
   void applyPump(const FountainOutputState &outputs);
   void applyCob(const FountainOutputState &outputs);
