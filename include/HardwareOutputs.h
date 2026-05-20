@@ -19,6 +19,8 @@ public:
 
 private:
   bool hardwareEnabled = false;
+  bool hasLoggedPumpLevel = false;
+  bool lastPumpOn = false;
 
   void applyPump(const FountainOutputState &outputs);
   void applyCob(const FountainOutputState &outputs);
