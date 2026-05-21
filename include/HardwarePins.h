@@ -5,13 +5,15 @@
 // Current V1 hardware test scope:
 // - Pump controlled through LR7843 MOSFET module
 // - Normal switch / float switch connected to GPIO and GND for water safety
-// - COB and RGB physical drivers disabled until their hardware is finalized
+// - COB controlled as ON/OFF through a MOSFET/driver signal
+// - RGB physical driver disabled until hardware is finalized
 //
 // IMPORTANT:
 // - ESP32 GPIO pins must never receive 12V.
-// - Pump power must go through the 12V supply and MOSFET module.
-// - ESP32 GND, 12V supply GND, MOSFET GND, and buck GND must be common.
+// - Pump/COB power must go through the external supply and MOSFET/driver path.
+// - ESP32 GND, power-supply GND, MOSFET GND, and buck GND must be common.
 // - Keep the pump in water before ON testing.
+// - Do not connect the COB LED directly to an ESP32 GPIO.
 
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
 
@@ -49,8 +51,12 @@
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
 
-// COB physical output disabled for now.
-// The 5W COB LEDs need current-limited driving before MOSFET/PWM testing.
+// COB output through a MOSFET/driver signal.
+// Wiring: GPIO6 -> COB MOSFET signal/input.
+// ACTIVE_HIGH means GPIO HIGH turns the COB output ON.
+// V1 is ON/OFF only. No brightness/PWM dimming yet.
+#define COB_OUTPUT_PIN 6
+#define COB_OUTPUT_ACTIVE_HIGH 1
 #define COB_PWM_PIN -1
 #define COB_PWM_CHANNEL 0
 #define COB_PWM_FREQUENCY 5000
