@@ -49,12 +49,6 @@ bool FountainOutputs::applyOutput(const char *outputKey, JsonObject state, const
 void FountainOutputs::applyPumpState(JsonObject state, const char *source, FountainOutputState &outputs, const FountainReadings &readings)
 {
   bool requestedEnabled = state["enabled"] | false;
-  int requestedSpeed = constrain((int)(state["speed_percent"] | 0), 0, 100);
-
-  if (!requestedEnabled)
-  {
-    requestedSpeed = 0;
-  }
 
   if (readings.waterLow && requestedEnabled)
   {
@@ -65,32 +59,25 @@ void FountainOutputs::applyPumpState(JsonObject state, const char *source, Fount
   }
 
   outputs.pumpEnabled = requestedEnabled;
-  outputs.pumpSpeedPercent = requestedSpeed;
+  outputs.pumpSpeedPercent = requestedEnabled ? 100 : 0;
 
   Serial.print("Pump state applied from ");
   Serial.print(source);
   Serial.print(": enabled=");
   Serial.print(outputs.pumpEnabled ? "true" : "false");
-  Serial.print(" speed=");
-  Serial.println(outputs.pumpSpeedPercent);
+  Serial.println(" mode=on_off");
 }
 
 void FountainOutputs::applyCobState(JsonObject state, const char *source, FountainOutputState &outputs)
 {
   outputs.cobEnabled = state["enabled"] | false;
-  outputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-
-  if (!outputs.cobEnabled)
-  {
-    outputs.cobBrightnessPercent = 0;
-  }
+  outputs.cobBrightnessPercent = outputs.cobEnabled ? 100 : 0;
 
   Serial.print("COB state applied from ");
   Serial.print(source);
   Serial.print(": enabled=");
   Serial.print(outputs.cobEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.println(outputs.cobBrightnessPercent);
+  Serial.println(" mode=on_off");
 }
 
 void FountainOutputs::applyRgbState(JsonObject state, const char *source, FountainOutputState &outputs)
