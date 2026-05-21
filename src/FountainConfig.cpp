@@ -28,19 +28,13 @@ void FountainConfig::copyOutputState(JsonObject sourceOutputs, JsonObject target
 
   if (strcmp(key, "pump") == 0)
   {
-    bool enabled = sourceState["enabled"] | false;
-    int speed = constrain((int)(sourceState["speed_percent"] | 0), 0, 100);
-    targetState["enabled"] = enabled;
-    targetState["speed_percent"] = enabled ? speed : 0;
+    targetState["enabled"] = sourceState["enabled"] | false;
     return;
   }
 
   if (strcmp(key, "cob_light") == 0)
   {
-    bool enabled = sourceState["enabled"] | false;
-    int brightness = constrain((int)(sourceState["brightness_percent"] | 0), 0, 100);
-    targetState["enabled"] = enabled;
-    targetState["brightness_percent"] = enabled ? brightness : 0;
+    targetState["enabled"] = sourceState["enabled"] | false;
     return;
   }
 
@@ -69,26 +63,14 @@ void FountainConfig::loadOutputStateFromJson(JsonObject sourceOutputs, const cha
   if (strcmp(key, "pump") == 0)
   {
     targetOutputs.pumpEnabled = state["enabled"] | false;
-    targetOutputs.pumpSpeedPercent = constrain((int)(state["speed_percent"] | 0), 0, 100);
-
-    if (!targetOutputs.pumpEnabled)
-    {
-      targetOutputs.pumpSpeedPercent = 0;
-    }
-
+    targetOutputs.pumpSpeedPercent = targetOutputs.pumpEnabled ? 100 : 0;
     return;
   }
 
   if (strcmp(key, "cob_light") == 0)
   {
     targetOutputs.cobEnabled = state["enabled"] | false;
-    targetOutputs.cobBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
-
-    if (!targetOutputs.cobEnabled)
-    {
-      targetOutputs.cobBrightnessPercent = 0;
-    }
-
+    targetOutputs.cobBrightnessPercent = targetOutputs.cobEnabled ? 100 : 0;
     return;
   }
 
@@ -144,13 +126,11 @@ void FountainConfig::loadInitialOutputs(JsonObject config, FountainOutputState &
   Serial.println("Initial output state loaded from Laravel config:");
   Serial.print(" - pump enabled=");
   Serial.print(outputs.pumpEnabled ? "true" : "false");
-  Serial.print(" speed=");
-  Serial.println(outputs.pumpSpeedPercent);
+  Serial.println(" mode=on_off");
 
   Serial.print(" - cob_light enabled=");
   Serial.print(outputs.cobEnabled ? "true" : "false");
-  Serial.print(" brightness=");
-  Serial.println(outputs.cobBrightnessPercent);
+  Serial.println(" mode=on_off");
 
   Serial.print(" - rgb_light enabled=");
   Serial.print(outputs.rgbEnabled ? "true" : "false");
@@ -229,7 +209,7 @@ String FountainConfig::buildCompactCacheJson(JsonObject config)
   // firmware cache for boot restore and upcoming offline daily timeline support.
   JsonDocument compact;
 
-  compact["cache_version"] = 1;
+  compact["cache_version"] = 2;
   compact["device_type"] = config["device_type"] | "smart_fountain";
   compact["timezone_offset_minutes"] = config["timezone_offset_minutes"] | 0;
 
