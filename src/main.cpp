@@ -376,12 +376,10 @@ String buildStatePayload(const char *source)
 
   JsonObject pump = outputJson["pump"].to<JsonObject>();
   pump["enabled"] = outputs.pumpEnabled;
-  pump["speed_percent"] = outputs.pumpSpeedPercent;
   pump["source"] = readings.waterLow ? "water_safety" : source;
 
   JsonObject cob = outputJson["cob_light"].to<JsonObject>();
   cob["enabled"] = outputs.cobEnabled;
-  cob["brightness_percent"] = outputs.cobBrightnessPercent;
   cob["source"] = source;
 
   JsonObject rgb = outputJson["rgb_light"].to<JsonObject>();
@@ -396,14 +394,6 @@ String buildStatePayload(const char *source)
   JsonObject waterLow = readingsJson["water_low"].to<JsonObject>();
   waterLow["value"] = readings.waterLow ? 1 : 0;
   waterLow["unit"] = "boolean";
-
-  JsonObject waterLevelPercent = readingsJson["water_level_percent"].to<JsonObject>();
-  waterLevelPercent["value"] = readings.waterLevelPercent;
-  waterLevelPercent["unit"] = "percent";
-
-  JsonObject waterLevelRaw = readingsJson["water_level_raw"].to<JsonObject>();
-  waterLevelRaw["value"] = readings.waterLevelRaw;
-  waterLevelRaw["unit"] = "adc";
 
   String payload;
   serializeJson(doc, payload);
