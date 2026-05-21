@@ -62,6 +62,14 @@
 #define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 #endif
 
+#ifndef COB_OUTPUT_PIN
+#define COB_OUTPUT_PIN -1
+#endif
+
+#ifndef COB_OUTPUT_ACTIVE_HIGH
+#define COB_OUTPUT_ACTIVE_HIGH 1
+#endif
+
 void HardwareOutputs::begin()
 {
   hardwareEnabled = SMART_FOUNTAIN_HARDWARE_ENABLED == 1;
@@ -112,17 +120,18 @@ void HardwareOutputs::begin()
     Serial.println("HardwareOutputs pump pin not configured.");
   }
 
-  if (COB_PWM_PIN >= 0)
+  if (COB_OUTPUT_PIN >= 0)
   {
-    ledcSetup(COB_PWM_CHANNEL, COB_PWM_FREQUENCY, COB_PWM_RESOLUTION_BITS);
-    ledcAttachPin(COB_PWM_PIN, COB_PWM_CHANNEL);
-    ledcWrite(COB_PWM_CHANNEL, 0);
-    Serial.print("HardwareOutputs COB PWM ready: GPIO ");
-    Serial.println(COB_PWM_PIN);
+    pinMode(COB_OUTPUT_PIN, OUTPUT);
+    digitalWrite(COB_OUTPUT_PIN, COB_OUTPUT_ACTIVE_HIGH == 1 ? LOW : HIGH);
+    Serial.print("HardwareOutputs COB pin ready: GPIO ");
+    Serial.print(COB_OUTPUT_PIN);
+    Serial.print(" active_");
+    Serial.println(COB_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
   }
   else
   {
-    Serial.println("HardwareOutputs COB PWM pin not configured.");
+    Serial.println("HardwareOutputs COB pin not configured.");
   }
 
   Serial.println("HardwareOutputs RGB driver is placeholder/TBD.");
@@ -264,9 +273,9 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     return;
   }
 
-  bool gpioOn = PUMP_OUTPUT_ACTIVE_HIGH == 1;
-  int onLevel = gpioOn ? HIGH : LOW;
-  int offLevel = gpioOn ? LOW : HIGH;
+  bool activeHigh = PUMP_OUTPUT_ACTIVE_HIGH == 1;
+  int onLevel = activeHigh ? HIGH : LOW;
+  int offLevel = activeHigh ? LOW : HIGH;
   int outputLevel = pumpOn ? onLevel : offLevel;
 
   digitalWrite(PUMP_OUTPUT_PIN, outputLevel);
@@ -278,9 +287,7 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     Serial.print(" -> ");
     Serial.print(outputLevel == HIGH ? "HIGH" : "LOW");
     Serial.print(" pump=");
-    Serial.print(pumpOn ? "ON" : "OFF");
-    Serial.print(" speed=");
-    Serial.println(requestedSpeedPercent);
+    Serial.println(pumpOn ? "ON" : "OFF");
 
     hasLoggedPumpLevel = true;
     lastPumpOn = pumpOn;
@@ -289,14 +296,31 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
 
 void HardwareOutputs::applyCob(const FountainOutputState &outputs)
 {
-  if (COB_PWM_PIN < 0)
+  if (COB_OUTPUT_PIN < 0)
   {
     return;
   }
 
-  int dutyMax = (1 << COB_PWM_RESOLUTION_BITS) - 1;
-  int duty = outputs.cobEnabled ? map(outputs.cobBrightnessPercent, 0, 100, 0, dutyMax) : 0;
-  ledcWrite(COB_PWM_CHANNEL, constrain(duty, 0, dutyMax));
+  bool cobOn = outputs.cobEnabled;
+  bool activeHigh = COB_OUTPUT_ACTIVE_HIGH == 1;
+  int onLevel = activeHigh ? HIGH : LOW;
+  int offLevel = activeHigh ? LOW : HIGH;
+  int outputLevel = cobOn ? onLevel : offLevel;
+
+  digitalWrite(COB_OUTPUT_PIN, outputLevel);
+
+  if (!hasLoggedCobLevel || lastCobOn != cobOn)
+  {
+    Serial.print("HardwareOutputs COB GPIO");
+    Serial.print(COB_OUTPUT_PIN);
+    Serial.print(" -> ");
+    Serial.print(outputLevel == HIGH ? "HIGH" : "LOW");
+    Serial.print(" cob=");
+    Serial.println(cobOn ? "ON" : "OFF");
+
+    hasLoggedCobLevel = true;
+    lastCobOn = cobOn;
+  }
 }
 
 void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
