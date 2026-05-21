@@ -27,6 +27,8 @@ private:
   bool pumpStartupBoostActive = false;
   unsigned long pumpStartupBoostUntil = 0;
   unsigned long lastPumpAssistKickAt = 0;
+  bool hasLoggedCobLevel = false;
+  bool lastCobOn = false;
 
   void applyPump(const FountainOutputState &outputs);
   void applyCob(const FountainOutputState &outputs);
