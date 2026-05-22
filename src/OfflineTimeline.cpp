@@ -64,6 +64,31 @@ void OfflineTimeline::update(const FountainDailyTimeline &timeline, const Device
   Serial.println(activeRange.endMinute);
 }
 
+void OfflineTimeline::rememberCurrentRangeAsSatisfied(const char *reason)
+{
+  if (lastActiveRangeIndex < 0)
+  {
+    return;
+  }
+
+  if (lastOfflineAppliedRangeIndex == lastActiveRangeIndex)
+  {
+    return;
+  }
+
+  lastOfflineAppliedRangeIndex = lastActiveRangeIndex;
+
+  Serial.print("OfflineTimeline current range marked satisfied");
+
+  if (reason != nullptr && strlen(reason) > 0)
+  {
+    Serial.print(": ");
+    Serial.print(reason);
+  }
+
+  Serial.println();
+}
+
 bool OfflineTimeline::applyActiveRangeIfNeeded(
     const FountainDailyTimeline &timeline,
     const DeviceClock &clock,
