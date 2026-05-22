@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 
+#include "ConfigCache.h"
 #include "DeviceStorage.h"
 
 static const int WIFI_RESET_BUTTON_PIN = 7;
@@ -15,7 +16,7 @@ void checkWifiResetOnBoot()
   Serial.println("Checking Wi-Fi reset button...");
   Serial.print("Wi-Fi reset GPIO: ");
   Serial.println(WIFI_RESET_BUTTON_PIN);
-  Serial.println("Hold Wi-Fi reset button during startup to clear saved Wi-Fi only.");
+  Serial.println("Hold Wi-Fi reset button during startup to clear saved Wi-Fi and cached runtime config.");
 
   if (digitalRead(WIFI_RESET_BUTTON_PIN) == HIGH)
   {
@@ -44,9 +45,10 @@ void checkWifiResetOnBoot()
   Serial.println("Wi-Fi reset confirmed.");
 
   clearStoredWifiCredentials();
+  clearCachedConfigJson();
   requestWifiSetupPortalOnNextBoot();
 
-  Serial.println("Saved Wi-Fi cleared. Cached Laravel config kept. Restarting into setup portal...");
+  Serial.println("Saved Wi-Fi and cached runtime config cleared. Restarting into setup portal...");
   delay(1000);
 
   ESP.restart();
