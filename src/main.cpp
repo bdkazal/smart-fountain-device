@@ -98,6 +98,19 @@ void syncHardwareOutputs()
   hardwareOutputs.apply(outputs);
 }
 
+void forceAllOutputsOff(const char *reason)
+{
+  outputs.pumpEnabled = false;
+  outputs.pumpSpeedPercent = 0;
+  outputs.cobEnabled = false;
+  outputs.cobBrightnessPercent = 0;
+  outputs.rgbEnabled = false;
+
+  Serial.print("All outputs forced OFF: ");
+  Serial.println(reason);
+  syncHardwareOutputs();
+}
+
 void applySafetyAndSyncHardware()
 {
   updateWaterReadings();
@@ -271,8 +284,7 @@ bool connectWifi(bool allowDevelopmentFallback = true)
     Serial.println("DeviceSecrets Wi-Fi failed.");
   }
 
-  Serial.println("Wi-Fi unavailable. Starting Smart Fountain setup hotspot.");
-  startSetupPortal();
+  Serial.println("Wi-Fi unavailable. Will retry later. Setup hotspot starts only after GPIO7 Wi-Fi reset.");
   return false;
 }
 
@@ -699,21 +711,22 @@ void setup()
   hardwareOutputs.begin();
   waterLevelSensor.begin();
   updateWaterReadings();
+  forceAllOutputsOff("safe boot default");
 
   checkWifiResetOnBoot();
   bool wifiSetupRequested = consumeWifiSetupPortalRequest();
 
-  loadCachedConfigIfAvailable();
-
   if (wifiSetupRequested)
   {
-    Serial.println("Wi-Fi setup was requested. Starting setup portal without trying saved/development Wi-Fi.");
+    Serial.println("Wi-Fi setup was requested. Setup mode will not load cached config or run local timeline.");
+    forceAllOutputsOff("Wi-Fi setup mode");
     startSetupPortal();
+    logCloudModeIfChanged();
+    return;
   }
-  else
-  {
-    connectWifi(true);
-  }
+
+  loadCachedConfigIfAvailable();
+  connectWifi(true);
 
   if (isWifiConnected())
   {
@@ -735,17 +748,17 @@ void loop()
 {
   unsigned long now = millis();
 
-  updateWaterReadings();
-  enforceWaterSafety();
-  logCloudModeIfChanged();
-  updateOfflineTimeline(now);
-
   if (isSetupPortalActive())
   {
     handleSetupPortal();
     delay(20);
     return;
   }
+
+  updateWaterReadings();
+  enforceWaterSafety();
+  logCloudModeIfChanged();
+  updateOfflineTimeline(now);
 
   if (!isWifiConnected())
   {
