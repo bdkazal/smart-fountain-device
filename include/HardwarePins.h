@@ -6,26 +6,20 @@
 // - Pump controlled through LR7843 MOSFET module
 // - Normal switch / float switch connected to GPIO and GND for water safety
 // - COB controlled as ON/OFF through a MOSFET/driver signal
-// - RGB physical driver disabled until hardware is finalized
+// - Analog 5V 5050 RGB controlled through 3 AO3400 low-side MOSFET channels
 //
 // IMPORTANT:
-// - ESP32 GPIO pins must never receive 12V.
-// - Pump/COB power must go through the external supply and MOSFET/driver path.
+// - ESP32 GPIO pins must never receive 12V or 5V.
+// - Pump/COB/RGB power must go through the external supply and MOSFET/driver path.
 // - ESP32 GND, power-supply GND, MOSFET GND, and buck GND must be common.
 // - Keep the pump in water before ON testing.
-// - Do not connect the COB LED directly to an ESP32 GPIO.
+// - Do not connect LEDs directly to ESP32 GPIO.
 
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
 
 // Pump output through LR7843 MOSFET module.
 // Wiring: GPIO5 -> LR7843 signal/input.
 // ACTIVE_HIGH means GPIO HIGH turns the pump MOSFET/load ON.
-//
-// Real hardware finding:
-// - The small pump has a very narrow useful PWM range.
-// - 10% can stall after some time.
-// - Low-speed assist caused pulsed water and MOSFET heating.
-// - For V1 safety, keep pump ON/OFF only until a proper pump driver strategy is chosen.
 #define PUMP_OUTPUT_PIN 5
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 0
@@ -62,11 +56,22 @@
 #define COB_PWM_FREQUENCY 5000
 #define COB_PWM_RESOLUTION_BITS 8
 
-// RGB physical output disabled for now.
-// Later choose addressable RGBIC/WS2812B/WS2811 or analog RGB PWM driver.
+// Analog 5V 5050 RGB through 3 AO3400 low-side MOSFET channels.
+// Wiring:
+// RGB +5V -> external 5V supply
+// RGB R/G/B pads -> MOSFET drains
+// MOSFET sources -> common GND
+// ESP32 GPIO -> 100R -> MOSFET gate, gate -> 10k -> GND
 #define RGB_HARDWARE_TYPE_NONE 0
-#define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_NONE
+#define RGB_HARDWARE_TYPE_ANALOG_PWM 1
+#define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_ANALOG_PWM
 #define RGB_DATA_PIN -1
-#define RGB_RED_PIN -1
-#define RGB_GREEN_PIN -1
-#define RGB_BLUE_PIN -1
+#define RGB_RED_PIN 2
+#define RGB_GREEN_PIN 3
+#define RGB_BLUE_PIN 4
+#define RGB_RED_CHANNEL 2
+#define RGB_GREEN_CHANNEL 3
+#define RGB_BLUE_CHANNEL 4
+#define RGB_PWM_FREQUENCY 1000
+#define RGB_PWM_RESOLUTION_BITS 8
+#define RGB_OUTPUT_ACTIVE_HIGH 1
