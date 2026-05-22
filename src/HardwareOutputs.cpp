@@ -208,6 +208,7 @@ void HardwareOutputs::begin()
     Serial.print(RGB_PWM_FREQUENCY);
     Serial.print("Hz active_");
     Serial.println(RGB_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    Serial.println("RGB channel test effects: warm_glow=RED, water_shimmer=GREEN, night_mode=BLUE.");
   }
   else
   {
@@ -410,14 +411,37 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   int blue = 0;
   int brightness = outputs.rgbEnabled ? constrain(outputs.rgbBrightnessPercent, 0, 100) : 0;
   String effect = outputs.rgbEffect;
+  String hardwareMode = "solid";
 
   parseRgbColor(outputs.rgbColor, red, green, blue);
 
-  if (outputs.rgbEnabled && effect == "breathing")
+  if (outputs.rgbEnabled && effect == "warm_glow")
+  {
+    red = 255;
+    green = 0;
+    blue = 0;
+    hardwareMode = "channel_test_red";
+  }
+  else if (outputs.rgbEnabled && effect == "water_shimmer")
+  {
+    red = 0;
+    green = 255;
+    blue = 0;
+    hardwareMode = "channel_test_green";
+  }
+  else if (outputs.rgbEnabled && effect == "night_mode")
+  {
+    red = 0;
+    green = 0;
+    blue = 255;
+    hardwareMode = "channel_test_blue";
+  }
+  else if (outputs.rgbEnabled && effect == "breathing")
   {
     float phase = (millis() % 3000) / 3000.0f;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
     brightness = (int)(brightness * (0.20f + (0.80f * wave)));
+    hardwareMode = "breathing";
   }
 
   int redDuty = rgbDutyFromChannel(red, brightness);
@@ -437,7 +461,15 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
       lastRgbGreenDuty != greenDuty ||
       lastRgbBlueDuty != blueDuty)
   {
-    Serial.print("HardwareOutputs RGB analog PWM R=GPIO");
+    Serial.print("HardwareOutputs RGB analog PWM parsed rgb=");
+    Serial.print(red);
+    Serial.print(",");
+    Serial.print(green);
+    Serial.print(",");
+    Serial.print(blue);
+    Serial.print(" mode=");
+    Serial.print(hardwareMode);
+    Serial.print(" R=GPIO");
     Serial.print(RGB_RED_PIN);
     Serial.print(" duty=");
     Serial.print(redDuty);
@@ -490,6 +522,8 @@ void HardwareOutputs::parseRgbColor(const String &hexColor, int &red, int &green
 
   if (color.length() != 7 || color.charAt(0) != '#')
   {
+    Serial.print("Invalid RGB color received: ");
+    Serial.println(hexColor);
     red = 0;
     green = 0;
     blue = 0;
