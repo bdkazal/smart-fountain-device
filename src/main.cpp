@@ -213,6 +213,7 @@ void updateOfflineTimeline(unsigned long now)
   else
   {
     offlineTimeline.update(dailyTimeline, deviceClock);
+    offlineTimeline.rememberCurrentRangeAsSatisfied("Laravel online; cloud/dashboard state remains source of truth");
   }
 
   lastOfflineTimelineCheckAt = now;
@@ -433,6 +434,8 @@ bool fetchConfig()
   applySafetyAndSyncHardware();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
+  offlineTimeline.update(dailyTimeline, deviceClock);
+  offlineTimeline.rememberCurrentRangeAsSatisfied("fresh Laravel config is current source of truth");
 
   String configJson = fountainConfig.buildCompactCacheJson(config);
 
