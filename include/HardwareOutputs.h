@@ -29,8 +29,18 @@ private:
   unsigned long lastPumpAssistKickAt = 0;
   bool hasLoggedCobLevel = false;
   bool lastCobOn = false;
+  bool hasLoggedRgbLevel = false;
+  bool lastRgbOn = false;
+  int lastRgbBrightnessPercent = -1;
+  String lastRgbColor = "";
+  String lastRgbEffect = "";
+  int lastRgbRedDuty = -1;
+  int lastRgbGreenDuty = -1;
+  int lastRgbBlueDuty = -1;
 
   void applyPump(const FountainOutputState &outputs);
   void applyCob(const FountainOutputState &outputs);
   void applyRgb(const FountainOutputState &outputs);
+  int rgbDutyFromChannel(int channelValue, int brightnessPercent) const;
+  void parseRgbColor(const String &hexColor, int &red, int &green, int &blue) const;
 };
