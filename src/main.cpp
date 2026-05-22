@@ -7,12 +7,15 @@
 #include "ConfigCache.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
+#include "DeviceStorage.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
 #include "OfflineTimeline.h"
+#include "SetupPortal.h"
 #include "WaterLevelSensor.h"
+#include "WifiReset.h"
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
@@ -27,6 +30,9 @@
 // - HardwareOutputs owns physical GPIO/PWM writes when real hardware is enabled.
 // - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
 // - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
+// - DeviceStorage owns stored Wi-Fi credentials and setup portal flag.
+// - SetupPortal owns the local Wi-Fi provisioning hotspot and setup page.
+// - WifiReset owns boot-time GPIO7 Wi-Fi reset/setup request.
 // - DeviceClock owns server-time sync and local HH:MM calculation.
 // - OfflineTimeline detects the active range and applies cached outputs only
 //   when Laravel/Wi-Fi/API is unavailable.
@@ -68,7 +74,6 @@ FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 OfflineTimeline offlineTimeline;
 
-// Forward declarations for helpers used before their definitions.
 void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
@@ -80,29 +85,21 @@ bool isWifiConnected()
 
 bool isOfflineControlMode()
 {
-  // Offline timeline should only change outputs when cloud control is not
-  // available. While Laravel is reachable, dashboard commands remain primary.
   return !isWifiConnected() || !serverReachableRecently;
 }
 
 unsigned long activeApiInterval(unsigned long normalInterval)
 {
-  // Keep fast 5s API cadence while online. When Laravel/API is unavailable,
-  // slow retries to reduce socket-error spam while local safety/timeline continue.
   return isOfflineControlMode() ? OFFLINE_API_RETRY_INTERVAL_MS : normalInterval;
 }
 
 void syncHardwareOutputs()
 {
-  // Safe no-op until SMART_FOUNTAIN_HARDWARE_ENABLED is set to 1 in HardwarePins.h.
   hardwareOutputs.apply(outputs);
 }
 
 void applySafetyAndSyncHardware()
 {
-  // The only safe path to physical outputs: refresh water reading first, enforce
-  // pump safety, then write GPIO/PWM. This prevents cached/cloud pump ON state
-  // from briefly reaching hardware when the float switch says low water.
   updateWaterReadings();
   fountainOutputs.enforceWaterSafety(outputs, readings);
   syncHardwareOutputs();
@@ -202,15 +199,22 @@ void loadCachedConfigIfAvailable()
   Serial.println("Cached Laravel config loaded.");
 }
 
-void connectWifi()
+bool connectWithCredentials(const String &ssid, const String &password)
 {
+  if (ssid.length() == 0)
+  {
+    Serial.println("Cannot connect to Wi-Fi: SSID is empty.");
+    return false;
+  }
+
   Serial.println();
-  Serial.print("Connecting Wi-Fi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println("Connecting Wi-Fi...");
+  Serial.print("SSID: ");
+  Serial.println(ssid);
 
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(ssid.c_str(), password.c_str());
 
   unsigned long startedAt = millis();
 
@@ -226,11 +230,50 @@ void connectWifi()
   {
     Serial.print("Wi-Fi connected. IP: ");
     Serial.println(WiFi.localIP());
+    Serial.print("RSSI dBm: ");
+    Serial.println(WiFi.RSSI());
+    return true;
+  }
+
+  Serial.println("Wi-Fi connection failed.");
+  return false;
+}
+
+bool connectWifi(bool allowDevelopmentFallback = true)
+{
+  StoredDeviceConfig storedConfig = loadStoredDeviceConfig();
+
+  if (storedConfig.hasWifiCredentials)
+  {
+    Serial.println("Trying stored Wi-Fi credentials...");
+
+    if (connectWithCredentials(storedConfig.wifiSsid, storedConfig.wifiPassword))
+    {
+      return true;
+    }
+
+    Serial.println("Stored Wi-Fi failed.");
   }
   else
   {
-    Serial.println("Wi-Fi connection failed. Device will retry later.");
+    Serial.println("No stored Wi-Fi credentials found.");
   }
+
+  if (allowDevelopmentFallback)
+  {
+    Serial.println("Trying DeviceSecrets Wi-Fi as development fallback...");
+
+    if (connectWithCredentials(WIFI_SSID, WIFI_PASSWORD))
+    {
+      return true;
+    }
+
+    Serial.println("DeviceSecrets Wi-Fi failed.");
+  }
+
+  Serial.println("Wi-Fi unavailable. Starting Smart Fountain setup hotspot.");
+  startSetupPortal();
+  return false;
 }
 
 bool getWithRetry(const String &url, String &response, int &statusCode)
@@ -271,8 +314,6 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
       return true;
     }
 
-    // -11 can happen around Wi-Fi reconnect or a just-started Laravel server.
-    // A short retry improves boot reliability without blocking local safety.
     if (attempt < CONFIG_FETCH_MAX_ATTEMPTS)
     {
       delay(300);
@@ -305,8 +346,6 @@ bool fetchConfig()
     return false;
   }
 
-  // ArduinoJson 7 JsonDocument uses heap-backed storage. This avoids large
-  // stack allocations on ESP32-C3 while parsing Laravel config responses.
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
@@ -346,8 +385,6 @@ bool fetchConfig()
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
-  // Cache only compact firmware data. The full Laravel config is too large for
-  // Preferences/NVS and contains dashboard-only fields.
   String configJson = fountainConfig.buildCompactCacheJson(config);
 
   Serial.print("Compact config cache JSON length: ");
@@ -363,8 +400,6 @@ bool fetchConfig()
 
 String buildStatePayload(const char *source)
 {
-  // /api/device/state is the trusted hardware truth for persistent-state devices.
-  // The backend may know the requested state, but the firmware reports actual state.
   JsonDocument doc;
 
   doc["device_uuid"] = DEVICE_UUID;
@@ -560,8 +595,6 @@ void processCommand(JsonObject command)
   Serial.print(" type=");
   Serial.println(commandType);
 
-  // For persistent-state products, executed means "state applied", not
-  // "operation completed". The final POST /api/device/state remains truth.
   ackCommand(commandId, "acknowledged");
 
   bool applied = false;
@@ -661,16 +694,26 @@ void setup()
   Serial.println(FIRMWARE_VERSION);
 
   beginConfigCache();
+  beginDeviceStorage();
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
   updateWaterReadings();
 
-  // Cached config gives the device a useful last-known output/timeline state
-  // before Laravel is contacted. This is the foundation for offline timeline.
+  checkWifiResetOnBoot();
+  bool wifiSetupRequested = consumeWifiSetupPortalRequest();
+
   loadCachedConfigIfAvailable();
 
-  connectWifi();
+  if (wifiSetupRequested)
+  {
+    Serial.println("Wi-Fi setup was requested. Starting setup portal without trying saved/development Wi-Fi.");
+    startSetupPortal();
+  }
+  else
+  {
+    connectWifi(true);
+  }
 
   if (isWifiConnected())
   {
@@ -692,19 +735,24 @@ void loop()
 {
   unsigned long now = millis();
 
-  // Local readings and safety run before network work so slow/failing HTTP
-  // cannot delay pump protection or cached offline schedule fallback.
   updateWaterReadings();
   enforceWaterSafety();
   logCloudModeIfChanged();
   updateOfflineTimeline(now);
+
+  if (isSetupPortalActive())
+  {
+    handleSetupPortal();
+    delay(20);
+    return;
+  }
 
   if (!isWifiConnected())
   {
     if (now - lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS)
     {
       Serial.println("Wi-Fi offline. Retrying connection...");
-      connectWifi();
+      connectWifi(true);
       lastWifiRetryAt = now;
     }
 
