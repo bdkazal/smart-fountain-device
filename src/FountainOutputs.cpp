@@ -2,9 +2,6 @@
 
 void FountainOutputs::enforceWaterSafety(FountainOutputState &outputs, const FountainReadings &readings)
 {
-  // This is the most important local product safety rule.
-  // Laravel may request pump ON, but the firmware must always protect the pump
-  // when the water-level reading says the fountain is dry/low.
   if (!readings.waterLow)
   {
     return;
@@ -12,7 +9,7 @@ void FountainOutputs::enforceWaterSafety(FountainOutputState &outputs, const Fou
 
   if (outputs.pumpEnabled || outputs.pumpSpeedPercent != 0)
   {
-    Serial.println("Water safety active: forcing pump OFF.");
+    Serial.println("Water safety active: pump output set to OFF.");
   }
 
   outputs.pumpEnabled = false;
@@ -83,14 +80,9 @@ void FountainOutputs::applyCobState(JsonObject state, const char *source, Founta
 void FountainOutputs::applyRgbState(JsonObject state, const char *source, FountainOutputState &outputs)
 {
   outputs.rgbEnabled = state["enabled"] | false;
-  outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | 0), 0, 100);
+  outputs.rgbBrightnessPercent = constrain((int)(state["brightness_percent"] | outputs.rgbBrightnessPercent), 0, 100);
   outputs.rgbColor = String((const char *)(state["color"] | outputs.rgbColor.c_str()));
   outputs.rgbEffect = String((const char *)(state["effect"] | outputs.rgbEffect.c_str()));
-
-  if (!outputs.rgbEnabled)
-  {
-    outputs.rgbBrightnessPercent = 0;
-  }
 
   Serial.print("RGB state applied from ");
   Serial.print(source);
