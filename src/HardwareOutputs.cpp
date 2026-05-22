@@ -119,7 +119,7 @@
 #endif
 
 #ifndef RGB_GREEN_CALIBRATION_PERCENT
-#define RGB_GREEN_CALIBRATION_PERCENT 60
+#define RGB_GREEN_CALIBRATION_PERCENT 35
 #endif
 
 void HardwareOutputs::begin()
@@ -541,18 +541,7 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
 int HardwareOutputs::rgbDutyFromChannel(int channelValue, int brightnessPercent) const
 {
   int dutyMax = (1 << RGB_PWM_RESOLUTION_BITS) - 1;
-  int calibratedChannelValue = constrain(channelValue, 0, 255);
-
-  if (channelValue > 0 && channelValue == calibratedChannelValue)
-  {
-    // Green is visually much stronger on the tested 5V 5050 strip. Treat
-    // requested green 100% as physical 60% so mixed colors are less green-heavy.
-    // This function is called once per channel, so we infer the green call by
-    // comparing against the caller order in applyRgb: red, green, blue is not
-    // available here. Green calibration is applied before calling this function.
-  }
-
-  int duty = map(calibratedChannelValue, 0, 255, 0, dutyMax);
+  int duty = map(constrain(channelValue, 0, 255), 0, 255, 0, dutyMax);
   duty = (duty * constrain(brightnessPercent, 0, 100)) / 100;
 
   if (RGB_OUTPUT_ACTIVE_HIGH != 1)
