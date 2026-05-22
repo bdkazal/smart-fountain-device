@@ -208,7 +208,7 @@ void HardwareOutputs::begin()
     Serial.print(RGB_PWM_FREQUENCY);
     Serial.print("Hz active_");
     Serial.println(RGB_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
-    Serial.println("RGB channel test effects: warm_glow=RED, water_shimmer=GREEN, night_mode=BLUE.");
+    Serial.println("RGB analog effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
   }
   else
   {
@@ -411,37 +411,67 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   int blue = 0;
   int brightness = outputs.rgbEnabled ? constrain(outputs.rgbBrightnessPercent, 0, 100) : 0;
   String effect = outputs.rgbEffect;
-  String hardwareMode = "solid";
+  String hardwareMode = effect;
 
   parseRgbColor(outputs.rgbColor, red, green, blue);
 
-  if (outputs.rgbEnabled && effect == "warm_glow")
+  if (!outputs.rgbEnabled)
   {
-    red = 255;
-    green = 0;
-    blue = 0;
-    hardwareMode = "channel_test_red";
+    brightness = 0;
+    hardwareMode = "off";
   }
-  else if (outputs.rgbEnabled && effect == "water_shimmer")
-  {
-    red = 0;
-    green = 255;
-    blue = 0;
-    hardwareMode = "channel_test_green";
-  }
-  else if (outputs.rgbEnabled && effect == "night_mode")
-  {
-    red = 0;
-    green = 0;
-    blue = 255;
-    hardwareMode = "channel_test_blue";
-  }
-  else if (outputs.rgbEnabled && effect == "breathing")
+  else if (effect == "breathing")
   {
     float phase = (millis() % 3000) / 3000.0f;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
-    brightness = (int)(brightness * (0.20f + (0.80f * wave)));
-    hardwareMode = "breathing";
+    brightness = (int)(brightness * (0.18f + (0.82f * wave)));
+  }
+  else if (effect == "slow_rainbow")
+  {
+    unsigned long t = millis() % 9000;
+    int segment = t / 1500;
+    int offset = map(t % 1500, 0, 1499, 0, 255);
+
+    switch (segment)
+    {
+    case 0: red = 255; green = offset; blue = 0; break;           // red -> yellow
+    case 1: red = 255 - offset; green = 255; blue = 0; break;     // yellow -> green
+    case 2: red = 0; green = 255; blue = offset; break;           // green -> cyan
+    case 3: red = 0; green = 255 - offset; blue = 255; break;     // cyan -> blue
+    case 4: red = offset; green = 0; blue = 255; break;           // blue -> magenta
+    default: red = 255; green = 0; blue = 255 - offset; break;    // magenta -> red
+    }
+  }
+  else if (effect == "warm_glow")
+  {
+    float phase = (millis() % 4200) / 4200.0f;
+    float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
+    red = 255;
+    green = 110 + (int)(50.0f * wave);
+    blue = 18;
+    brightness = (int)(brightness * (0.72f + (0.28f * wave)));
+  }
+  else if (effect == "water_shimmer")
+  {
+    unsigned long t = millis() % 2600;
+    float phaseA = t / 2600.0f;
+    float phaseB = ((millis() + 900) % 2600) / 2600.0f;
+    float waveA = (sin(phaseA * 2.0f * PI) + 1.0f) / 2.0f;
+    float waveB = (sin(phaseB * 2.0f * PI) + 1.0f) / 2.0f;
+    red = 0;
+    green = 95 + (int)(85.0f * waveA);
+    blue = 170 + (int)(85.0f * waveB);
+  }
+  else if (effect == "night_mode")
+  {
+    red = 0;
+    green = 8;
+    blue = 80;
+    brightness = min(brightness, 35);
+  }
+  else
+  {
+    hardwareMode = "solid";
   }
 
   int redDuty = rgbDutyFromChannel(red, brightness);
