@@ -28,7 +28,7 @@ String jsonEscape(const String &value)
 String setupPageHtml()
 {
   return R"rawliteral(
-<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Smart Fountain Setup</title><style>body{font-family:Arial,sans-serif;background:#f3f4f6;padding:20px}.card{max-width:440px;margin:30px auto;background:#fff;padding:24px;border-radius:16px;box-shadow:0 2px 14px rgba(15,23,42,.10)}h1{font-size:24px;margin:0 0 8px;color:#0f172a}p{color:#475569;line-height:1.45}label{display:block;margin-top:16px;font-weight:800;color:#334155}select,input{width:100%;box-sizing:border-box;padding:12px;margin-top:6px;border:1px solid #cbd5e1;border-radius:10px;font-size:16px}button{width:100%;margin-top:22px;padding:13px;background:#0ea5e9;color:white;border:0;border-radius:999px;font-size:16px;font-weight:800;cursor:pointer}button:disabled{background:#94a3b8}.secondary{display:block;text-align:center;margin-top:14px;color:#0284c7;text-decoration:none;font-size:14px;cursor:pointer}.alert{padding:12px;border-radius:10px;margin-bottom:16px;font-size:14px;display:none}.error{background:#fee2e2;color:#991b1b}.success{background:#dcfce7;color:#166534}.info{background:#e0f2fe;color:#075985}.small{font-size:13px;color:#64748b;margin-top:16px}.hint{font-size:13px;color:#64748b;margin-top:6px}.hidden{display:none}</style></head><body><div class="card"><h1>Smart Fountain Setup</h1><p id="intro">Select your home Wi-Fi or type the SSID manually.</p><div id="message" class="alert"></div><form id="wifi-form"><label>Wi-Fi Network</label><select id="ssid" name="ssid"><option value="">Scanning will start automatically...</option></select><label>Manual SSID</label><input id="manual_ssid" name="manual_ssid" type="text" placeholder="Type SSID if needed"><p class="hint">Use manual SSID if scan fails or network is hidden.</p><label>Wi-Fi Key</label><input id="wifi_key" name="wifi_key" type="password"><button id="submit-button" type="submit">Test, Save and Restart</button></form><a id="refresh-link" class="secondary" onclick="loadNetworks()">Refresh Wi-Fi List</a><p class="small">Hotspot: Fountain-Setup<br>URL: http://192.168.4.1</p></div><script>const m=document.getElementById('message'),s=document.getElementById('ssid'),manual=document.getElementById('manual_ssid'),key=document.getElementById('wifi_key'),btn=document.getElementById('submit-button'),form=document.getElementById('wifi-form'),refresh=document.getElementById('refresh-link'),intro=document.getElementById('intro');function msg(t,c){m.textContent=t;m.className='alert '+c;m.style.display='block'}function clearMsg(){m.textContent='';m.style.display='none'}async function loadNetworks(){clearMsg();s.innerHTML='<option value="">Scanning...</option>';try{const r=await fetch('/networks');const d=await r.json();s.innerHTML='<option value="">Use manual SSID or select network</option>';if(!d.networks||d.networks.length===0){msg('No networks found. Type SSID manually.','info');return}d.networks.forEach(n=>{const o=document.createElement('option');o.value=n.ssid;o.textContent=n.ssid+' ('+n.rssi+' dBm)';s.appendChild(o)})}catch(e){s.innerHTML='<option value="">Use manual SSID</option>';msg('Scan failed. Type SSID manually.','info')}}form.addEventListener('submit',async e=>{e.preventDefault();const ssid=(manual.value.trim()||s.value);if(!ssid){msg('Select or type SSID.','error');return}btn.disabled=true;msg('Testing Wi-Fi. Wait up to 15 seconds...','info');const body=new URLSearchParams();body.append('ssid',ssid);body.append('wifi_key',key.value);try{const r=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const d=await r.json();if(!d.ok){msg(d.message||'Could not connect. Check and try again.','error');btn.disabled=false;key.focus();return}msg(d.message||'Saved. Device restarting.','success');intro.textContent='Wi-Fi saved. Device is restarting.';form.className='hidden';refresh.className='hidden'}catch(e){msg('Test failed. Try again.','error');btn.disabled=false;key.focus()}});window.addEventListener('load',()=>setTimeout(loadNetworks,300));</script></body></html>
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Smart Fountain Setup</title><style>body{font-family:Arial,sans-serif;background:#f3f4f6;padding:20px}.card{max-width:440px;margin:30px auto;background:#fff;padding:24px;border-radius:12px;box-shadow:0 2px 10px rgba(0,0,0,.08)}h1{font-size:22px;margin-bottom:8px}p{color:#555;line-height:1.4}label{display:block;margin-top:16px;font-weight:bold}select,input{width:100%;box-sizing:border-box;padding:12px;margin-top:6px;border:1px solid #ccc;border-radius:8px;font-size:16px}button{width:100%;margin-top:22px;padding:12px;background:#2563eb;color:white;border:0;border-radius:8px;font-size:16px;cursor:pointer}button:disabled{background:#9ca3af}.secondary{display:block;text-align:center;margin-top:14px;color:#2563eb;text-decoration:none;font-size:14px;cursor:pointer}.alert{padding:12px;border-radius:8px;margin-bottom:16px;font-size:14px;display:none}.error{background:#fee2e2;color:#991b1b}.success{background:#dcfce7;color:#166534}.info{background:#dbeafe;color:#1e40af}.small{font-size:13px;color:#666;margin-top:16px}.hint{font-size:13px;color:#666;margin-top:6px}.hidden{display:none}.password-wrap{display:flex;gap:8px;align-items:center}.password-wrap input{flex:1}.toggle-btn{width:auto;margin-top:6px;padding:12px;background:#e5e7eb;color:#111827;border:1px solid #ccc;border-radius:8px;font-size:14px}</style></head><body><div class="card"><h1>Smart Fountain Setup</h1><p id="intro">Select your home Wi-Fi or type the SSID manually, then enter the password.</p><div id="message" class="alert"></div><form id="wifi-form"><label for="ssid">Wi-Fi Network</label><select id="ssid" name="ssid"><option value="">Page loaded. Wi-Fi scan will start automatically...</option></select><label for="manual_ssid">Manual SSID / hidden network</label><input id="manual_ssid" name="manual_ssid" type="text" placeholder="Type SSID if scan fails or network is hidden"><p class="hint">Use manual SSID only if the network list is empty, unstable, or your Wi-Fi is hidden.</p><label for="password">Wi-Fi Password</label><div class="password-wrap"><input id="password" name="password" type="password"><button id="toggle-password" class="toggle-btn" type="button">Show</button></div><button id="submit-button" type="submit">Test, Save and Restart</button></form><a id="refresh-link" class="secondary" onclick="loadNetworks()">Refresh Wi-Fi List</a><p class="small">Setup hotspot: Fountain-Setup<br>Setup password: fountain123<br>Setup page: http://192.168.4.1</p></div><script>const messageBox=document.getElementById('message'),ssidSelect=document.getElementById('ssid'),manualSsidInput=document.getElementById('manual_ssid'),passwordInput=document.getElementById('password'),togglePassword=document.getElementById('toggle-password'),submitButton=document.getElementById('submit-button'),form=document.getElementById('wifi-form'),refreshLink=document.getElementById('refresh-link'),intro=document.getElementById('intro');function showMessage(text,type){messageBox.textContent=text;messageBox.className='alert '+type;messageBox.style.display='block'}function clearMessage(){messageBox.textContent='';messageBox.style.display='none'}async function loadNetworks(){clearMessage();ssidSelect.innerHTML='<option value="">Scanning Wi-Fi networks...</option>';try{const response=await fetch('/networks');const data=await response.json();ssidSelect.innerHTML='<option value="">Use manual SSID or select scanned network</option>';if(!data.networks||data.networks.length===0){showMessage('No Wi-Fi networks found. You can type the SSID manually below.','info');return}data.networks.forEach(network=>{const option=document.createElement('option');option.value=network.ssid;option.textContent=network.ssid+' ('+network.rssi+' dBm)';ssidSelect.appendChild(option)})}catch(error){ssidSelect.innerHTML='<option value="">Use manual SSID</option>';showMessage('Scan failed. Type the SSID manually below.','info')}}function showSuccessAndHideForm(message){showMessage(message,'success');intro.textContent='Wi-Fi saved successfully. The device is restarting. This setup page will disconnect shortly.';form.className='hidden';refreshLink.className='hidden'}togglePassword.addEventListener('click',function(){const showing=passwordInput.type==='text';passwordInput.type=showing?'password':'text';togglePassword.textContent=showing?'Show':'Hide';passwordInput.focus()});form.addEventListener('submit',async function(event){event.preventDefault();const manualSsid=manualSsidInput.value.trim();const ssid=manualSsid.length?manualSsid:ssidSelect.value;const password=passwordInput.value;if(!ssid){showMessage('Select a Wi-Fi network or type the SSID manually.','error');return}submitButton.disabled=true;showMessage('Testing Wi-Fi credentials. This may take up to 15 seconds...','info');const body=new URLSearchParams();body.append('ssid',ssid);body.append('password',password);try{const response=await fetch('/save',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:body.toString()});const data=await response.json();if(!data.ok){showMessage(data.message||'Could not connect. Check the Wi-Fi password and try again.','error');submitButton.disabled=false;passwordInput.focus();return}showSuccessAndHideForm(data.message||'Wi-Fi saved successfully. Device is restarting.')}catch(error){showMessage('Connection test failed. Stay on this page, check the password, and try again.','error');submitButton.disabled=false;passwordInput.focus()}});window.addEventListener('load',function(){setTimeout(loadNetworks,300)});</script></body></html>
 )rawliteral";
 }
 
@@ -46,43 +46,63 @@ void handleNetworks()
 {
   Serial.println();
   Serial.println("Scanning Wi-Fi networks for setup page...");
+
   WiFi.mode(WIFI_AP_STA);
   applySetupWifiPower();
   WiFi.scanDelete();
   delay(100);
+
   int networkCount = WiFi.scanNetworks(false, true);
   Serial.print("Wi-Fi scan result count: ");
   Serial.println(networkCount);
 
   String json = "{\"networks\":[";
   bool first = true;
+
   if (networkCount > 0)
   {
     for (int i = 0; i < networkCount; i++)
     {
       String ssid = WiFi.SSID(i);
-      if (ssid.length() == 0) continue;
-      if (!first) json += ",";
-      json += "{\"ssid\":\"" + jsonEscape(ssid) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + "}";
+      int rssi = WiFi.RSSI(i);
+
+      if (ssid.length() == 0)
+      {
+        continue;
+      }
+
+      if (!first)
+      {
+        json += ",";
+      }
+
+      json += "{\"ssid\":\"";
+      json += jsonEscape(ssid);
+      json += "\",\"rssi\":";
+      json += String(rssi);
+      json += "}";
       first = false;
     }
   }
+
   json += "]}";
   WiFi.scanDelete();
   setupServer.send(200, "application/json", json);
 }
 
-bool testWiFiCredentials(const String &ssid, const String &wifiKey)
+bool testWiFiCredentials(const String &ssid, const String &password)
 {
   Serial.println();
   Serial.println("Testing submitted Wi-Fi credentials...");
   Serial.print("SSID: ");
   Serial.println(ssid);
+
   WiFi.mode(WIFI_AP_STA);
   applySetupWifiPower();
-  WiFi.begin(ssid.c_str(), wifiKey.c_str());
+  WiFi.begin(ssid.c_str(), password.c_str());
 
   int attempts = 0;
+
   while (WiFi.status() != WL_CONNECTED && attempts < 30)
   {
     delay(500);
@@ -90,6 +110,7 @@ bool testWiFiCredentials(const String &ssid, const String &wifiKey)
     setupServer.handleClient();
     attempts++;
   }
+
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED)
@@ -110,7 +131,7 @@ bool testWiFiCredentials(const String &ssid, const String &wifiKey)
 void handleSave()
 {
   String ssid = setupServer.arg("ssid");
-  String wifiKey = setupServer.arg("wifi_key");
+  String password = setupServer.arg("password");
   ssid.trim();
 
   if (ssid.length() == 0)
@@ -119,15 +140,15 @@ void handleSave()
     return;
   }
 
-  if (!testWiFiCredentials(ssid, wifiKey))
+  if (!testWiFiCredentials(ssid, password))
   {
-    setupServer.send(200, "application/json", "{\"ok\":false,\"message\":\"Could not connect. Check the Wi-Fi key and try again.\"}");
+    setupServer.send(200, "application/json", "{\"ok\":false,\"message\":\"Could not connect to that Wi-Fi. Check the Wi-Fi password and try again.\"}");
     return;
   }
 
-  if (!saveWifiCredentials(ssid, wifiKey))
+  if (!saveWifiCredentials(ssid, password))
   {
-    setupServer.send(500, "application/json", "{\"ok\":false,\"message\":\"Connection worked, but saving failed.\"}");
+    setupServer.send(500, "application/json", "{\"ok\":false,\"message\":\"Connection worked, but saving credentials failed.\"}");
     return;
   }
 
@@ -146,6 +167,7 @@ void startSetupPortal()
 {
   Serial.println();
   Serial.println("Starting setup portal...");
+
   WiFi.persistent(false);
   WiFi.disconnect(true, true);
   WiFi.softAPdisconnect(true);
@@ -156,7 +178,13 @@ void startSetupPortal()
   delay(100);
   applySetupWifiPower();
 
-  bool apStarted = WiFi.softAP(SETUP_AP_SSID, SETUP_AP_PASSWORD, SETUP_AP_CHANNEL, SETUP_AP_HIDDEN, SETUP_AP_MAX_CONNECTIONS);
+  bool apStarted = WiFi.softAP(
+      SETUP_AP_SSID,
+      SETUP_AP_PASSWORD,
+      SETUP_AP_CHANNEL,
+      SETUP_AP_HIDDEN,
+      SETUP_AP_MAX_CONNECTIONS);
+
   delay(200);
   IPAddress ip = WiFi.softAPIP();
 
@@ -164,7 +192,16 @@ void startSetupPortal()
   Serial.println(apStarted ? "yes" : "no");
   Serial.print("Setup hotspot SSID: ");
   Serial.println(SETUP_AP_SSID);
-  Serial.print("Setup hotspot URL: http://");
+  Serial.print("Setup hotspot password: ");
+  Serial.println(SETUP_AP_PASSWORD);
+  Serial.print("Setup hotspot channel: ");
+  Serial.println(SETUP_AP_CHANNEL);
+  Serial.println("Setup AP TX power: 8.5 dBm");
+  Serial.print("Setup AP MAC: ");
+  Serial.println(WiFi.softAPmacAddress());
+  Serial.print("Setup AP station count: ");
+  Serial.println(WiFi.softAPgetStationNum());
+  Serial.print("Setup portal URL: http://");
   Serial.println(ip);
 
   if (!apStarted)
@@ -177,10 +214,12 @@ void startSetupPortal()
   setupServer.on("/", HTTP_GET, handleRoot);
   setupServer.on("/networks", HTTP_GET, handleNetworks);
   setupServer.on("/save", HTTP_POST, handleSave);
-  setupServer.on("/favicon.ico", HTTP_GET, []() { setupServer.send(204, "text/plain", ""); });
+  setupServer.on("/favicon.ico", HTTP_GET, []()
+                 { setupServer.send(204, "text/plain", ""); });
   setupServer.onNotFound(handleNotFound);
   setupServer.begin();
   setupPortalActive = true;
+
   Serial.println("Setup portal started.");
 }
 
