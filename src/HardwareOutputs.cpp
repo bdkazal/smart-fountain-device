@@ -118,6 +118,10 @@
 #define RGB_OUTPUT_ACTIVE_HIGH 1
 #endif
 
+#ifndef RGB_GREEN_CALIBRATION_PERCENT
+#define RGB_GREEN_CALIBRATION_PERCENT 60
+#endif
+
 void HardwareOutputs::begin()
 {
   hardwareEnabled = SMART_FOUNTAIN_HARDWARE_ENABLED == 1;
@@ -207,7 +211,10 @@ void HardwareOutputs::begin()
     Serial.print(" freq=");
     Serial.print(RGB_PWM_FREQUENCY);
     Serial.print("Hz active_");
-    Serial.println(RGB_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    Serial.print(RGB_OUTPUT_ACTIVE_HIGH == 1 ? "HIGH" : "LOW");
+    Serial.print(" green_calibration=");
+    Serial.print(RGB_GREEN_CALIBRATION_PERCENT);
+    Serial.println("%");
     Serial.println("RGB analog effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
   }
   else
@@ -422,15 +429,15 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "breathing")
   {
-    float phase = (millis() % 3000) / 3000.0f;
+    float phase = (millis() % 6000) / 6000.0f;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
     brightness = (int)(brightness * (0.18f + (0.82f * wave)));
   }
   else if (effect == "slow_rainbow")
   {
-    unsigned long t = millis() % 9000;
-    int segment = t / 1500;
-    int offset = map(t % 1500, 0, 1499, 0, 255);
+    unsigned long t = millis() % 18000;
+    int segment = t / 3000;
+    int offset = map(t % 3000, 0, 2999, 0, 255);
 
     switch (segment)
     {
@@ -444,7 +451,7 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "warm_glow")
   {
-    float phase = (millis() % 4200) / 4200.0f;
+    float phase = (millis() % 8400) / 8400.0f;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
     red = 255;
     green = 110 + (int)(50.0f * wave);
@@ -453,9 +460,9 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "water_shimmer")
   {
-    unsigned long t = millis() % 2600;
-    float phaseA = t / 2600.0f;
-    float phaseB = ((millis() + 900) % 2600) / 2600.0f;
+    unsigned long t = millis() % 5200;
+    float phaseA = t / 5200.0f;
+    float phaseB = ((millis() + 1800) % 5200) / 5200.0f;
     float waveA = (sin(phaseA * 2.0f * PI) + 1.0f) / 2.0f;
     float waveB = (sin(phaseB * 2.0f * PI) + 1.0f) / 2.0f;
     red = 0;
@@ -534,7 +541,18 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
 int HardwareOutputs::rgbDutyFromChannel(int channelValue, int brightnessPercent) const
 {
   int dutyMax = (1 << RGB_PWM_RESOLUTION_BITS) - 1;
-  int duty = map(constrain(channelValue, 0, 255), 0, 255, 0, dutyMax);
+  int calibratedChannelValue = constrain(channelValue, 0, 255);
+
+  if (channelValue > 0 && channelValue == calibratedChannelValue)
+  {
+    // Green is visually much stronger on the tested 5V 5050 strip. Treat
+    // requested green 100% as physical 60% so mixed colors are less green-heavy.
+    // This function is called once per channel, so we infer the green call by
+    // comparing against the caller order in applyRgb: red, green, blue is not
+    // available here. Green calibration is applied before calling this function.
+  }
+
+  int duty = map(calibratedChannelValue, 0, 255, 0, dutyMax);
   duty = (duty * constrain(brightnessPercent, 0, 100)) / 100;
 
   if (RGB_OUTPUT_ACTIVE_HIGH != 1)
@@ -563,4 +581,6 @@ void HardwareOutputs::parseRgbColor(const String &hexColor, int &red, int &green
   red = (int)strtol(color.substring(1, 3).c_str(), nullptr, 16);
   green = (int)strtol(color.substring(3, 5).c_str(), nullptr, 16);
   blue = (int)strtol(color.substring(5, 7).c_str(), nullptr, 16);
+
+  green = (green * constrain(RGB_GREEN_CALIBRATION_PERCENT, 0, 100)) / 100;
 }
