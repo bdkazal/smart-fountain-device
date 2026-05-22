@@ -12,7 +12,6 @@
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
-#include "OfflineTimeline.h"
 #include "SetupPortal.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
@@ -21,28 +20,32 @@
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
 #endif
 
-// Smart Fountain firmware skeleton.
+// Smart Fountain V1 is a persistent-state device.
 //
-// Main owns the boot/runtime API flow. Product rules that deserve their own
-// isolated home are moving out of this file step by step:
-// - WaterLevelSensor owns water reading/simulation for now.
-// - FountainOutputs owns pump/COB/RGB state application and local pump safety.
-// - HardwareOutputs owns physical GPIO/PWM writes when real hardware is enabled.
-// - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
-// - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
-// - DeviceStorage owns stored Wi-Fi credentials and setup portal flag.
-// - SetupPortal owns the local Wi-Fi provisioning hotspot and setup page.
-// - WifiReset owns boot-time GPIO7 Wi-Fi reset/setup request.
-// - DeviceClock owns server-time sync and local HH:MM calculation.
-// - OfflineTimeline detects the active range and applies cached outputs only
-//   when Laravel/Wi-Fi/API is unavailable.
+// Online:
+// - fetch Laravel current config/settings
+// - apply outputs
+// - save compact config if changed
+// - keep checking periodically
+//
+// Offline / server unavailable:
+// - keep the last trusted saved/current output state
+// - do not apply daily timeline ranges or scene presets automatically
+// - do not change outputs only because Laravel disappeared
+//
+// Reboot while offline:
+// - load saved compact config from flash
+// - restore that saved output state
+// - keep that state until Laravel becomes reachable again
+//
+// GPIO7 setup reset is the only exception: setup mode clears Wi-Fi/cache and
+// forces outputs OFF for safety.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
 const unsigned long OFFLINE_API_RETRY_INTERVAL_MS = 30000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
 
 enum CloudControlMode
@@ -56,7 +59,6 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
-unsigned long lastOfflineTimelineCheckAt = 0;
 
 bool serverReachableRecently = false;
 bool outputStateTrusted = false;
@@ -73,7 +75,6 @@ FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
-OfflineTimeline offlineTimeline;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
@@ -159,11 +160,11 @@ void logCloudModeIfChanged()
 
   if (!isWifiConnected())
   {
-    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, cached local schedule may run.");
+    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, keeping last trusted saved output state.");
   }
   else
   {
-    Serial.println("Cloud mode: OFFLINE - API unavailable, cached local schedule may run.");
+    Serial.println("Cloud mode: OFFLINE - API unavailable, keeping last trusted saved output state.");
   }
 }
 
@@ -176,47 +177,6 @@ void enforceWaterSafety()
 {
   fountainOutputs.enforceWaterSafety(outputs, readings);
   syncHardwareOutputs();
-}
-
-void updateOfflineTimeline(unsigned long now)
-{
-  if (now - lastOfflineTimelineCheckAt < OFFLINE_TIMELINE_CHECK_INTERVAL_MS)
-  {
-    return;
-  }
-
-  if (isOfflineControlMode())
-  {
-    if (!dailyTimeline.enabled || dailyTimeline.rangeCount == 0)
-    {
-      Serial.println("OfflineTimeline skipped: no cached/enabled daily timeline.");
-    }
-    else if (!deviceClock.isTimeValid())
-    {
-      Serial.println("OfflineTimeline skipped: device time is not valid.");
-    }
-
-    bool applied = offlineTimeline.applyActiveRangeIfNeeded(
-        dailyTimeline,
-        deviceClock,
-        outputs,
-        readings,
-        fountainOutputs);
-
-    if (applied)
-    {
-      markOutputStateTrusted("offline timeline applied cached range");
-      applySafetyAndSyncHardware();
-      Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
-    }
-  }
-  else
-  {
-    offlineTimeline.update(dailyTimeline, deviceClock);
-    offlineTimeline.rememberCurrentRangeAsSatisfied("Laravel online; cloud/dashboard state remains source of truth");
-  }
-
-  lastOfflineTimelineCheckAt = now;
 }
 
 bool loadCachedConfigIfAvailable()
@@ -245,7 +205,7 @@ bool loadCachedConfigIfAvailable()
 
   markOutputStateTrusted("cached Laravel config loaded");
   applySafetyAndSyncHardware();
-  Serial.println("Cached Laravel config loaded.");
+  Serial.println("Cached Laravel config loaded. Device will keep this state if Laravel is unavailable.");
   return true;
 }
 
@@ -434,8 +394,6 @@ bool fetchConfig()
   applySafetyAndSyncHardware();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
-  offlineTimeline.update(dailyTimeline, deviceClock);
-  offlineTimeline.rememberCurrentRangeAsSatisfied("fresh Laravel config is current source of truth");
 
   String configJson = fountainConfig.buildCompactCacheJson(config);
 
@@ -787,7 +745,6 @@ void setup()
     lastConfigFetchAt = now;
     lastStateSyncAt = now;
     lastCommandPollAt = now;
-    lastOfflineTimelineCheckAt = now;
   }
 
   logCloudModeIfChanged();
@@ -807,7 +764,6 @@ void loop()
   updateWaterReadings();
   enforceWaterSafety();
   logCloudModeIfChanged();
-  updateOfflineTimeline(now);
 
   if (!isWifiConnected())
   {
