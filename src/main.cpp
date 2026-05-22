@@ -59,6 +59,7 @@ unsigned long lastWifiRetryAt = 0;
 unsigned long lastOfflineTimelineCheckAt = 0;
 
 bool serverReachableRecently = false;
+bool outputStateTrusted = false;
 String serverTimeUtc = "";
 String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
@@ -98,6 +99,24 @@ void syncHardwareOutputs()
   hardwareOutputs.apply(outputs);
 }
 
+void markOutputStateTrusted(const char *reason)
+{
+  if (!outputStateTrusted)
+  {
+    Serial.print("Output state trusted: ");
+    Serial.println(reason);
+  }
+
+  outputStateTrusted = true;
+}
+
+void markOutputStateUntrusted(const char *reason)
+{
+  outputStateTrusted = false;
+  Serial.print("Output state untrusted: ");
+  Serial.println(reason);
+}
+
 void forceAllOutputsOff(const char *reason)
 {
   outputs.pumpEnabled = false;
@@ -105,6 +124,9 @@ void forceAllOutputsOff(const char *reason)
   outputs.cobEnabled = false;
   outputs.cobBrightnessPercent = 0;
   outputs.rgbEnabled = false;
+  outputs.rgbBrightnessPercent = 0;
+  outputs.rgbColor = "#000000";
+  outputs.rgbEffect = "solid";
 
   Serial.print("All outputs forced OFF: ");
   Serial.println(reason);
@@ -165,6 +187,15 @@ void updateOfflineTimeline(unsigned long now)
 
   if (isOfflineControlMode())
   {
+    if (!dailyTimeline.enabled || dailyTimeline.rangeCount == 0)
+    {
+      Serial.println("OfflineTimeline skipped: no cached/enabled daily timeline.");
+    }
+    else if (!deviceClock.isTimeValid())
+    {
+      Serial.println("OfflineTimeline skipped: device time is not valid.");
+    }
+
     bool applied = offlineTimeline.applyActiveRangeIfNeeded(
         dailyTimeline,
         deviceClock,
@@ -174,6 +205,7 @@ void updateOfflineTimeline(unsigned long now)
 
     if (applied)
     {
+      markOutputStateTrusted("offline timeline applied cached range");
       applySafetyAndSyncHardware();
       Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
     }
@@ -186,14 +218,15 @@ void updateOfflineTimeline(unsigned long now)
   lastOfflineTimelineCheckAt = now;
 }
 
-void loadCachedConfigIfAvailable()
+bool loadCachedConfigIfAvailable()
 {
   String cachedConfigJson = loadCachedConfigJson();
 
   if (cachedConfigJson.length() == 0)
   {
     Serial.println("No cached Laravel config found.");
-    return;
+    markOutputStateUntrusted("no cached Laravel config; safe boot OFF must not sync to Laravel");
+    return false;
   }
 
   Serial.println();
@@ -205,11 +238,14 @@ void loadCachedConfigIfAvailable()
   if (!parsed)
   {
     Serial.println("Cached Laravel config exists but could not be parsed.");
-    return;
+    markOutputStateUntrusted("cached Laravel config parse failed; safe boot OFF must not sync to Laravel");
+    return false;
   }
 
+  markOutputStateTrusted("cached Laravel config loaded");
   applySafetyAndSyncHardware();
   Serial.println("Cached Laravel config loaded.");
+  return true;
 }
 
 bool connectWithCredentials(const String &ssid, const String &password)
@@ -393,6 +429,7 @@ bool fetchConfig()
   }
 
   fountainConfig.loadInitialOutputs(config, outputs);
+  markOutputStateTrusted("fresh Laravel config fetched");
   applySafetyAndSyncHardware();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
@@ -453,6 +490,12 @@ bool postState(const char *source = "device_state")
   if (!isWifiConnected())
   {
     Serial.println("State sync skipped: Wi-Fi offline.");
+    return false;
+  }
+
+  if (!outputStateTrusted)
+  {
+    Serial.println("State sync skipped: output state is not trusted yet. Safe boot OFF will not be pushed to Laravel.");
     return false;
   }
 
@@ -628,6 +671,7 @@ void processCommand(JsonObject command)
 
   if (applied)
   {
+    markOutputStateTrusted("cloud command applied");
     ackCommand(commandId, "executed");
   }
   else
@@ -711,7 +755,8 @@ void setup()
   hardwareOutputs.begin();
   waterLevelSensor.begin();
   updateWaterReadings();
-  forceAllOutputsOff("safe boot default");
+  forceAllOutputsOff("safe boot hardware default");
+  markOutputStateUntrusted("safe boot OFF is hardware-only until cached or fresh config loads");
 
   checkWifiResetOnBoot();
   bool wifiSetupRequested = consumeWifiSetupPortalRequest();
@@ -720,6 +765,7 @@ void setup()
   {
     Serial.println("Wi-Fi setup was requested. Setup mode will not load cached config or run local timeline.");
     forceAllOutputsOff("Wi-Fi setup mode");
+    markOutputStateUntrusted("Wi-Fi setup mode output OFF must not sync to Laravel");
     startSetupPortal();
     logCloudModeIfChanged();
     return;
