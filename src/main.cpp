@@ -41,12 +41,14 @@
 // GPIO7 setup reset is the only exception: setup mode clears Wi-Fi/cache and
 // forces outputs OFF for safety.
 
-const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
-const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
-const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
-const unsigned long OFFLINE_API_RETRY_INTERVAL_MS = 30000;
+const unsigned long CONFIG_FETCH_INTERVAL_MS = 30000;
+const unsigned long STATE_SYNC_INTERVAL_MS = 2000;
+const unsigned long COMMAND_POLL_INTERVAL_MS = 1000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
+const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
+const unsigned long HTTP_TIMEOUT_MS = 2000;
+const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
+const int MAX_CONSECUTIVE_API_FAILURES = 5;
 
 enum CloudControlMode
 {
@@ -59,7 +61,9 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
+unsigned long lastNetworkRecoveryAt = 0;
 
+int consecutiveApiFailures = 0;
 bool serverReachableRecently = false;
 bool outputStateTrusted = false;
 String serverTimeUtc = "";
@@ -79,6 +83,10 @@ HardwareOutputs hardwareOutputs;
 void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
+bool connectWifi(bool allowDevelopmentFallback = true);
+void registerApiSuccess(const char *requestName);
+void registerApiFailure(const char *requestName, int statusCode);
+void recoverNetworkIfNeeded(const char *reason);
 
 bool isWifiConnected()
 {
@@ -88,11 +96,6 @@ bool isWifiConnected()
 bool isOfflineControlMode()
 {
   return !isWifiConnected() || !serverReachableRecently;
-}
-
-unsigned long activeApiInterval(unsigned long normalInterval)
-{
-  return isOfflineControlMode() ? OFFLINE_API_RETRY_INTERVAL_MS : normalInterval;
 }
 
 void syncHardwareOutputs()
@@ -249,7 +252,7 @@ bool connectWithCredentials(const String &ssid, const String &password)
   return false;
 }
 
-bool connectWifi(bool allowDevelopmentFallback = true)
+bool connectWifi(bool allowDevelopmentFallback)
 {
   StoredDeviceConfig storedConfig = loadStoredDeviceConfig();
 
@@ -285,6 +288,67 @@ bool connectWifi(bool allowDevelopmentFallback = true)
   return false;
 }
 
+void recoverNetworkIfNeeded(const char *reason)
+{
+  if (consecutiveApiFailures < MAX_CONSECUTIVE_API_FAILURES)
+  {
+    return;
+  }
+
+  unsigned long now = millis();
+
+  if (now - lastNetworkRecoveryAt < WIFI_RECOVERY_COOLDOWN_MS)
+  {
+    return;
+  }
+
+  lastNetworkRecoveryAt = now;
+
+  Serial.println();
+  Serial.print("API failure recovery: restarting Wi-Fi after repeated failures. reason=");
+  Serial.println(reason);
+
+  WiFi.disconnect(true);
+  delay(150);
+  WiFi.mode(WIFI_OFF);
+  delay(300);
+
+  consecutiveApiFailures = 0;
+  serverReachableRecently = false;
+  lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
+
+  connectWifi(true);
+}
+
+void registerApiSuccess(const char *requestName)
+{
+  if (consecutiveApiFailures > 0)
+  {
+    Serial.print("API recovered after ");
+    Serial.print(consecutiveApiFailures);
+    Serial.print(" failure(s). request=");
+    Serial.println(requestName);
+  }
+
+  consecutiveApiFailures = 0;
+  serverReachableRecently = true;
+}
+
+void registerApiFailure(const char *requestName, int statusCode)
+{
+  consecutiveApiFailures++;
+  serverReachableRecently = false;
+
+  Serial.print("API failure #");
+  Serial.print(consecutiveApiFailures);
+  Serial.print(" request=");
+  Serial.print(requestName);
+  Serial.print(" status=");
+  Serial.println(statusCode);
+
+  recoverNetworkIfNeeded(requestName);
+}
+
 bool getWithRetry(const String &url, String &response, int &statusCode)
 {
   response = "";
@@ -293,23 +357,13 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
   for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
   {
     HTTPClient http;
-    http.setTimeout(7000);
+    http.setTimeout(HTTP_TIMEOUT_MS);
     http.begin(url);
     apiClient.addDeviceHeaders(http);
 
-    if (attempt == 1)
-    {
-      Serial.println();
-      Serial.print("GET ");
-      Serial.println(url);
-    }
-    else
-    {
-      Serial.print("Retry GET attempt ");
-      Serial.print(attempt);
-      Serial.print(" ");
-      Serial.println(url);
-    }
+    Serial.println();
+    Serial.print("GET ");
+    Serial.println(url);
 
     statusCode = http.GET();
     response = http.getString();
@@ -325,7 +379,7 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
 
     if (attempt < CONFIG_FETCH_MAX_ATTEMPTS)
     {
-      delay(300);
+      delay(100);
     }
   }
 
@@ -351,7 +405,7 @@ bool fetchConfig()
       Serial.println(response);
     }
 
-    serverReachableRecently = false;
+    registerApiFailure("config", statusCode);
     return false;
   }
 
@@ -362,11 +416,11 @@ bool fetchConfig()
   {
     Serial.print("Config JSON parse failed: ");
     Serial.println(error.c_str());
-    serverReachableRecently = false;
+    registerApiFailure("config_parse", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("config");
   serverTimeUtc = doc["server_time_utc"] | "";
 
   JsonObject config = doc["config"].as<JsonObject>();
@@ -467,7 +521,7 @@ bool postState(const char *source = "device_state")
   String payload = buildStatePayload(source);
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -487,11 +541,11 @@ bool postState(const char *source = "device_state")
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("state", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("state");
   Serial.println("State synced.");
   return true;
 }
@@ -519,7 +573,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   serializeJson(doc, payload);
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -538,11 +592,11 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("ack", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("ack");
   return true;
 }
 
@@ -654,7 +708,7 @@ bool pollCommands()
   String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -672,11 +726,11 @@ bool pollCommands()
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("commands", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("commands");
 
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
@@ -685,6 +739,7 @@ bool pollCommands()
   {
     Serial.print("Command JSON parse failed: ");
     Serial.println(error.c_str());
+    registerApiFailure("commands_parse", statusCode);
     return false;
   }
 
@@ -778,29 +833,25 @@ void loop()
     return;
   }
 
-  unsigned long configInterval = activeApiInterval(CONFIG_FETCH_INTERVAL_MS);
-  unsigned long stateInterval = activeApiInterval(STATE_SYNC_INTERVAL_MS);
-  unsigned long commandInterval = activeApiInterval(COMMAND_POLL_INTERVAL_MS);
-
-  if (now - lastConfigFetchAt >= configInterval)
+  if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
   {
-    fetchConfig();
+    pollCommands();
     logCloudModeIfChanged();
-    lastConfigFetchAt = now;
+    lastCommandPollAt = now;
   }
 
-  if (now - lastStateSyncAt >= stateInterval)
+  if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
   {
     postState("device_state");
     logCloudModeIfChanged();
     lastStateSyncAt = now;
   }
 
-  if (now - lastCommandPollAt >= commandInterval)
+  if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
   {
-    pollCommands();
+    fetchConfig();
     logCloudModeIfChanged();
-    lastCommandPollAt = now;
+    lastConfigFetchAt = now;
   }
 
   delay(20);
