@@ -43,10 +43,12 @@
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 30000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 2000;
-const unsigned long COMMAND_POLL_INTERVAL_MS = 1000;
+const unsigned long COMMAND_POLL_INTERVAL_MS = 500;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
 const unsigned long HTTP_TIMEOUT_MS = 2000;
+const unsigned long COMMAND_HTTP_TIMEOUT_MS = 1200;
+const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 10000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
 const int MAX_CONSECUTIVE_API_FAILURES = 5;
 
@@ -62,6 +64,7 @@ unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastNetworkRecoveryAt = 0;
+unsigned long lastNoCommandLogAt = 0;
 
 int consecutiveApiFailures = 0;
 bool serverReachableRecently = false;
@@ -573,7 +576,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   serializeJson(doc, payload);
 
   HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -708,23 +711,21 @@ bool pollCommands()
   String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
-
-  Serial.println();
-  Serial.print("GET ");
-  Serial.println(url);
 
   int statusCode = http.GET();
   String response = http.getString();
   http.end();
 
-  Serial.print("Command HTTP status: ");
-  Serial.println(statusCode);
-
   if (statusCode < 200 || statusCode >= 300)
   {
+    Serial.println();
+    Serial.print("GET ");
+    Serial.println(url);
+    Serial.print("Command HTTP status: ");
+    Serial.println(statusCode);
     Serial.println(response);
     registerApiFailure("commands", statusCode);
     return false;
@@ -747,9 +748,22 @@ bool pollCommands()
 
   if (command.isNull())
   {
-    Serial.println("No pending command.");
-    return true;
+    unsigned long now = millis();
+
+    if (now - lastNoCommandLogAt >= NO_COMMAND_LOG_INTERVAL_MS)
+    {
+      Serial.println("No pending command.");
+      lastNoCommandLogAt = now;
+    }
+
+    return false;
   }
+
+  Serial.println();
+  Serial.print("GET ");
+  Serial.println(url);
+  Serial.print("Command HTTP status: ");
+  Serial.println(statusCode);
 
   processCommand(command);
   return true;
@@ -835,9 +849,15 @@ void loop()
 
   if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
   {
-    pollCommands();
+    bool commandProcessed = pollCommands();
     logCloudModeIfChanged();
     lastCommandPollAt = now;
+
+    if (commandProcessed)
+    {
+      delay(20);
+      return;
+    }
   }
 
   if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
