@@ -1,0 +1,17 @@
+{
+  "folders": [
+    {
+      "path": "../../../laravel/projects/biztola-iot-platform",
+    },
+    {
+      "path": ".",
+    },
+    {
+      "path": "../../../Documents/smart-fountain-device-e24f01ddc60553f7e3ec4c41f1019856a4611ae6",
+    },
+  ],
+  "settings": {
+    "javascript.validate.enable": false,
+    "blade.format.enable": false,
+  },
+}
