@@ -41,16 +41,16 @@
 // GPIO7 setup reset is the only exception: setup mode clears Wi-Fi/cache and
 // forces outputs OFF for safety.
 
-const unsigned long CONFIG_FETCH_INTERVAL_MS = 30000;
-const unsigned long STATE_SYNC_INTERVAL_MS = 2000;
-const unsigned long COMMAND_POLL_INTERVAL_MS = 500;
+const unsigned long CONFIG_FETCH_INTERVAL_MS = 120000;
+const unsigned long STATE_SYNC_INTERVAL_MS = 10000;
+const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
-const unsigned long HTTP_TIMEOUT_MS = 2000;
-const unsigned long COMMAND_HTTP_TIMEOUT_MS = 1200;
-const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 10000;
+const unsigned long HTTP_TIMEOUT_MS = 5000;
+const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
+const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
-const int MAX_CONSECUTIVE_API_FAILURES = 5;
+const int MAX_CONSECUTIVE_API_FAILURES = 3;
 
 enum CloudControlMode
 {
