@@ -37,10 +37,10 @@
 #define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / temporary normal switch input.
-// Wiring: GPIO1 -> switch -> GND.
+// Wiring: GPIO0 -> switch -> GND.
 // Internal pull-up keeps the pin HIGH when the switch is open.
 // ACTIVE_LOW means closed switch reads LOW and becomes water_low=true.
-#define WATER_LEVEL_SWITCH_PIN 1
+#define WATER_LEVEL_SWITCH_PIN 0
 #define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
