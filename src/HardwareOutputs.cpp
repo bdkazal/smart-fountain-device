@@ -153,7 +153,23 @@
 #endif
 
 #ifndef NEOPIXEL_FRAME_INTERVAL_MS
-#define NEOPIXEL_FRAME_INTERVAL_MS 40
+#define NEOPIXEL_FRAME_INTERVAL_MS 50
+#endif
+
+#ifndef RGB_BREATHING_PERIOD_MS
+#define RGB_BREATHING_PERIOD_MS 10000
+#endif
+
+#ifndef RGB_SLOW_RAINBOW_PERIOD_MS
+#define RGB_SLOW_RAINBOW_PERIOD_MS 36000
+#endif
+
+#ifndef RGB_WARM_GLOW_PERIOD_MS
+#define RGB_WARM_GLOW_PERIOD_MS 14000
+#endif
+
+#ifndef RGB_WATER_SHIMMER_PERIOD_MS
+#define RGB_WATER_SHIMMER_PERIOD_MS 9000
 #endif
 
 namespace
@@ -169,6 +185,11 @@ bool isAnimatedRgbEffect(const String &effect)
          effect == "warm_glow" ||
          effect == "water_shimmer" ||
          effect == "night_mode";
+}
+
+unsigned long safeEffectPeriod(unsigned long configuredPeriod, unsigned long fallbackPeriod)
+{
+  return configuredPeriod >= 1000 ? configuredPeriod : fallbackPeriod;
 }
 
 void renderNeoPixels(int red, int green, int blue)
@@ -295,6 +316,14 @@ void HardwareOutputs::begin()
     Serial.println(NEOPIXEL_COLOR_ORDER_GRB == 1 ? "GRB" : "RGB");
     Serial.print("frame_interval_ms=");
     Serial.println(NEOPIXEL_FRAME_INTERVAL_MS);
+    Serial.print("periods_ms breathing=");
+    Serial.print(RGB_BREATHING_PERIOD_MS);
+    Serial.print(" rainbow=");
+    Serial.print(RGB_SLOW_RAINBOW_PERIOD_MS);
+    Serial.print(" warm_glow=");
+    Serial.print(RGB_WARM_GLOW_PERIOD_MS);
+    Serial.print(" water_shimmer=");
+    Serial.println(RGB_WATER_SHIMMER_PERIOD_MS);
     Serial.println("NeoPixel effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
   }
   else
@@ -514,15 +543,18 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "breathing")
   {
-    float phase = (millis() % 6000) / 6000.0f;
+    unsigned long period = safeEffectPeriod(RGB_BREATHING_PERIOD_MS, 10000);
+    float phase = (millis() % period) / (float)period;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
     brightness = (int)(brightness * (0.18f + (0.82f * wave)));
   }
   else if (effect == "slow_rainbow")
   {
-    unsigned long t = millis() % 18000;
-    int segment = t / 3000;
-    int offset = map(t % 3000, 0, 2999, 0, 255);
+    unsigned long period = safeEffectPeriod(RGB_SLOW_RAINBOW_PERIOD_MS, 36000);
+    unsigned long segmentDuration = max(1UL, period / 6UL);
+    unsigned long t = millis() % period;
+    int segment = t / segmentDuration;
+    int offset = map(t % segmentDuration, 0, segmentDuration - 1, 0, 255);
 
     switch (segment)
     {
@@ -536,7 +568,8 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "warm_glow")
   {
-    float phase = (millis() % 8400) / 8400.0f;
+    unsigned long period = safeEffectPeriod(RGB_WARM_GLOW_PERIOD_MS, 14000);
+    float phase = (millis() % period) / (float)period;
     float wave = (sin(phase * 2.0f * PI) + 1.0f) / 2.0f;
     red = 255;
     green = 110 + (int)(50.0f * wave);
@@ -545,9 +578,9 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   }
   else if (effect == "water_shimmer")
   {
-    unsigned long t = millis() % 5200;
-    float phaseA = t / 5200.0f;
-    float phaseB = ((millis() + 1800) % 5200) / 5200.0f;
+    unsigned long period = safeEffectPeriod(RGB_WATER_SHIMMER_PERIOD_MS, 9000);
+    float phaseA = (millis() % period) / (float)period;
+    float phaseB = ((millis() + (period / 3UL)) % period) / (float)period;
     float waveA = (sin(phaseA * 2.0f * PI) + 1.0f) / 2.0f;
     float waveB = (sin(phaseB * 2.0f * PI) + 1.0f) / 2.0f;
     red = 0;
