@@ -2,7 +2,7 @@
 
 bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOffsetMinutesValue)
 {
-  long parsedEpochSeconds = 0;
+  unsigned long parsedEpochSeconds = 0;
 
   if (!parseServerTimeUtc(serverTimeUtc, parsedEpochSeconds))
   {
@@ -11,12 +11,27 @@ bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOf
     return false;
   }
 
-  syncedUtcEpochSeconds = parsedEpochSeconds;
+  return syncFromUtcEpoch(parsedEpochSeconds, timezoneOffsetMinutesValue, "Laravel UTC");
+}
+
+bool DeviceClock::syncFromUtcEpoch(unsigned long utcEpochSecondsValue, int timezoneOffsetMinutesValue, const char *sourceLabel)
+{
+  if (!isReasonableEpoch(utcEpochSecondsValue))
+  {
+    Serial.print("DeviceClock sync failed. Unreasonable UTC epoch: ");
+    Serial.println(utcEpochSecondsValue);
+    return false;
+  }
+
+  syncedUtcEpochSeconds = utcEpochSecondsValue;
   syncedAtMillis = millis();
   tzOffsetMinutes = timezoneOffsetMinutesValue;
+  timeSource = sourceLabel == nullptr ? "UTC" : String(sourceLabel);
   timeValid = true;
 
-  Serial.print("DeviceClock synced. Local time: ");
+  Serial.print("DeviceClock synced from ");
+  Serial.print(timeSource);
+  Serial.print(". Local time: ");
   Serial.print(localTimeHHMM());
   Serial.print(" timezone_offset_minutes=");
   Serial.println(tzOffsetMinutes);
@@ -37,17 +52,17 @@ int DeviceClock::localMinutesOfDay() const
   }
 
   unsigned long elapsedSeconds = (millis() - syncedAtMillis) / 1000UL;
-  long currentUtcSeconds = syncedUtcEpochSeconds + (long)elapsedSeconds;
-  long localSeconds = currentUtcSeconds + (tzOffsetMinutes * 60L);
+  unsigned long currentUtcSeconds = syncedUtcEpochSeconds + elapsedSeconds;
+  long localDaySeconds = (long)(currentUtcSeconds % 86400UL) + (tzOffsetMinutes * 60L);
 
-  long secondsInDay = localSeconds % 86400L;
+  localDaySeconds %= 86400L;
 
-  if (secondsInDay < 0)
+  if (localDaySeconds < 0)
   {
-    secondsInDay += 86400L;
+    localDaySeconds += 86400L;
   }
 
-  return (int)(secondsInDay / 60L);
+  return (int)(localDaySeconds / 60L);
 }
 
 String DeviceClock::localTimeHHMM() const
@@ -73,7 +88,23 @@ long DeviceClock::timezoneOffsetMinutes() const
   return tzOffsetMinutes;
 }
 
-bool DeviceClock::parseServerTimeUtc(const String &serverTimeUtc, long &epochSeconds) const
+unsigned long DeviceClock::utcEpochSeconds() const
+{
+  if (!timeValid)
+  {
+    return 0;
+  }
+
+  unsigned long elapsedSeconds = (millis() - syncedAtMillis) / 1000UL;
+  return syncedUtcEpochSeconds + elapsedSeconds;
+}
+
+String DeviceClock::sourceName() const
+{
+  return timeSource;
+}
+
+bool DeviceClock::parseServerTimeUtc(const String &serverTimeUtc, unsigned long &epochSeconds) const
 {
   // Expected Laravel format: 2026-05-13T17:53:23+00:00
   // For V1, timezone in the string must be UTC (+00:00 or Z). Device-local
@@ -90,24 +121,30 @@ bool DeviceClock::parseServerTimeUtc(const String &serverTimeUtc, long &epochSec
   int minute = serverTimeUtc.substring(14, 16).toInt();
   int second = serverTimeUtc.substring(17, 19).toInt();
 
-  if (year < 2020 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59)
+  if (year < 2025 || year > 2099 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59)
   {
     return false;
   }
 
-  long days = 0;
+  unsigned long days = 0;
 
   for (int y = 1970; y < year; y++)
   {
-    days += isLeapYear(y) ? 366 : 365;
+    days += isLeapYear(y) ? 366UL : 365UL;
   }
 
   days += daysBeforeMonth(year, month);
   days += day - 1;
 
-  epochSeconds = (days * 86400L) + (hour * 3600L) + (minute * 60L) + second;
+  epochSeconds = (days * 86400UL) + ((unsigned long)hour * 3600UL) + ((unsigned long)minute * 60UL) + (unsigned long)second;
 
-  return true;
+  return isReasonableEpoch(epochSeconds);
+}
+
+bool DeviceClock::isReasonableEpoch(unsigned long epochSeconds) const
+{
+  // 2025-01-01 00:00:00 UTC through 2099-12-31-ish.
+  return epochSeconds >= 1735689600UL && epochSeconds <= 4102444800UL;
 }
 
 bool DeviceClock::isLeapYear(int year) const
