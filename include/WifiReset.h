@@ -1,3 +1,5 @@
 #pragma once
 
-void checkWifiResetOnBoot();
+void beginWifiResetButton();
+bool checkWifiResetOnBoot();
+bool updateWifiResetButton();
