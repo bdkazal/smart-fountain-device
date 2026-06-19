@@ -8,6 +8,14 @@
 #include "HardwarePins.example.h"
 #endif
 
+#ifndef SMART_FOUNTAIN_HARDWARE_ENABLED
+#define SMART_FOUNTAIN_HARDWARE_ENABLED 0
+#endif
+
+#ifndef PUMP_OUTPUT_PIN
+#define PUMP_OUTPUT_PIN -1
+#endif
+
 #ifndef PUMP_OUTPUT_ACTIVE_HIGH
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #endif
@@ -144,9 +152,32 @@
 #define NEOPIXEL_COLOR_ORDER_GRB 1
 #endif
 
+#ifndef NEOPIXEL_FRAME_INTERVAL_MS
+#define NEOPIXEL_FRAME_INTERVAL_MS 40
+#endif
+
 namespace
 {
 CRGB neoPixels[NEOPIXEL_COUNT];
+unsigned long lastNeoPixelFrameAt = 0;
+bool neoPixelFrameRendered = false;
+
+bool isAnimatedRgbEffect(const String &effect)
+{
+  return effect == "breathing" ||
+         effect == "slow_rainbow" ||
+         effect == "warm_glow" ||
+         effect == "water_shimmer" ||
+         effect == "night_mode";
+}
+
+void renderNeoPixels(int red, int green, int blue)
+{
+  fill_solid(neoPixels, NEOPIXEL_COUNT, CRGB(red, green, blue));
+  FastLED.show();
+  lastNeoPixelFrameAt = millis();
+  neoPixelFrameRendered = true;
+}
 }
 
 void HardwareOutputs::begin()
@@ -252,8 +283,7 @@ void HardwareOutputs::begin()
     FastLED.addLeds<WS2812B, NEOPIXEL_DATA_PIN, RGB>(neoPixels, NEOPIXEL_COUNT);
 #endif
     FastLED.setBrightness(constrain(NEOPIXEL_MAX_BRIGHTNESS, 0, 255));
-    fill_solid(neoPixels, NEOPIXEL_COUNT, CRGB::Black);
-    FastLED.show();
+    renderNeoPixels(0, 0, 0);
 
     Serial.print("HardwareOutputs NeoPixel ready: data=GPIO");
     Serial.print(NEOPIXEL_DATA_PIN);
@@ -263,6 +293,8 @@ void HardwareOutputs::begin()
     Serial.print(NEOPIXEL_MAX_BRIGHTNESS);
     Serial.print(" color_order=");
     Serial.println(NEOPIXEL_COLOR_ORDER_GRB == 1 ? "GRB" : "RGB");
+    Serial.print("frame_interval_ms=");
+    Serial.println(NEOPIXEL_FRAME_INTERVAL_MS);
     Serial.println("NeoPixel effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
   }
   else
@@ -303,12 +335,7 @@ void HardwareOutputs::applyPump(const FountainOutputState &outputs)
     int dutyMax = (1 << PUMP_PWM_RESOLUTION_BITS) - 1;
     int minDutyPercent = constrain(PUMP_PWM_MIN_DUTY_PERCENT, 0, 100);
     int maxDutyPercent = constrain(PUMP_PWM_MAX_DUTY_PERCENT, minDutyPercent, 100);
-    int mappedDutyPercent = 0;
-
-    if (pumpOn)
-    {
-      mappedDutyPercent = constrain(requestedSpeedPercent, minDutyPercent, maxDutyPercent);
-    }
+    int mappedDutyPercent = pumpOn ? constrain(requestedSpeedPercent, minDutyPercent, maxDutyPercent) : 0;
 
     if (pumpOn && !lastPumpOn)
     {
@@ -499,12 +526,12 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
 
     switch (segment)
     {
-    case 0: red = 255; green = offset; blue = 0; break;           // red -> yellow
-    case 1: red = 255 - offset; green = 255; blue = 0; break;     // yellow -> green
-    case 2: red = 0; green = 255; blue = offset; break;           // green -> cyan
-    case 3: red = 0; green = 255 - offset; blue = 255; break;     // cyan -> blue
-    case 4: red = offset; green = 0; blue = 255; break;           // blue -> magenta
-    default: red = 255; green = 0; blue = 255 - offset; break;    // magenta -> red
+    case 0: red = 255; green = offset; blue = 0; break;
+    case 1: red = 255 - offset; green = 255; blue = 0; break;
+    case 2: red = 0; green = 255; blue = offset; break;
+    case 3: red = 0; green = 255 - offset; blue = 255; break;
+    case 4: red = offset; green = 0; blue = 255; break;
+    default: red = 255; green = 0; blue = 255 - offset; break;
     }
   }
   else if (effect == "warm_glow")
@@ -544,18 +571,30 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
     int renderedRed = (constrain(red, 0, 255) * brightness) / 100;
     int renderedGreen = (constrain(green, 0, 255) * brightness) / 100;
     int renderedBlue = (constrain(blue, 0, 255) * brightness) / 100;
+    bool animated = outputs.rgbEnabled && isAnimatedRgbEffect(effect);
+    bool logicalChanged = !hasLoggedRgbLevel ||
+                          lastRgbOn != outputs.rgbEnabled ||
+                          lastRgbBrightnessPercent != outputs.rgbBrightnessPercent ||
+                          lastRgbColor != outputs.rgbColor ||
+                          lastRgbEffect != outputs.rgbEffect;
+    bool renderedChanged = !neoPixelFrameRendered ||
+                           lastRgbRedDuty != renderedRed ||
+                           lastRgbGreenDuty != renderedGreen ||
+                           lastRgbBlueDuty != renderedBlue;
 
-    fill_solid(neoPixels, NEOPIXEL_COUNT, CRGB(renderedRed, renderedGreen, renderedBlue));
-    FastLED.show();
+    if (!logicalChanged && !renderedChanged)
+    {
+      return;
+    }
 
-    if (!hasLoggedRgbLevel ||
-        lastRgbOn != outputs.rgbEnabled ||
-        lastRgbBrightnessPercent != outputs.rgbBrightnessPercent ||
-        lastRgbColor != outputs.rgbColor ||
-        lastRgbEffect != outputs.rgbEffect ||
-        lastRgbRedDuty != renderedRed ||
-        lastRgbGreenDuty != renderedGreen ||
-        lastRgbBlueDuty != renderedBlue)
+    if (animated && !logicalChanged && (millis() - lastNeoPixelFrameAt) < NEOPIXEL_FRAME_INTERVAL_MS)
+    {
+      return;
+    }
+
+    renderNeoPixels(renderedRed, renderedGreen, renderedBlue);
+
+    if (logicalChanged)
     {
       Serial.print("HardwareOutputs NeoPixel rendered rgb=");
       Serial.print(renderedRed);
@@ -583,17 +622,16 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
       Serial.print(outputs.rgbColor);
       Serial.print(" effect=");
       Serial.println(outputs.rgbEffect);
-
-      hasLoggedRgbLevel = true;
-      lastRgbOn = outputs.rgbEnabled;
-      lastRgbBrightnessPercent = outputs.rgbBrightnessPercent;
-      lastRgbColor = outputs.rgbColor;
-      lastRgbEffect = outputs.rgbEffect;
-      lastRgbRedDuty = renderedRed;
-      lastRgbGreenDuty = renderedGreen;
-      lastRgbBlueDuty = renderedBlue;
     }
 
+    hasLoggedRgbLevel = true;
+    lastRgbOn = outputs.rgbEnabled;
+    lastRgbBrightnessPercent = outputs.rgbBrightnessPercent;
+    lastRgbColor = outputs.rgbColor;
+    lastRgbEffect = outputs.rgbEffect;
+    lastRgbRedDuty = renderedRed;
+    lastRgbGreenDuty = renderedGreen;
+    lastRgbBlueDuty = renderedBlue;
     return;
   }
 
