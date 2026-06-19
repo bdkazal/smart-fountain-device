@@ -24,5 +24,6 @@ void ApiClient::addDeviceHeaders(HTTPClient &http) const
   // carries device_uuid so Laravel can bind the request to the correct row.
   http.addHeader("Accept", "application/json");
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("Connection", "close");
   http.addHeader("X-DEVICE-KEY", apiKey);
 }

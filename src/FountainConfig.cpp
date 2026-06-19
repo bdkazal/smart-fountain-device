@@ -1,5 +1,34 @@
 #include "FountainConfig.h"
 
+#include "DeviceClock.h"
+#include "RtcClock.h"
+
+extern DeviceClock deviceClock;
+
+namespace
+{
+const int DEFAULT_TIMEZONE_OFFSET_MINUTES = 360;
+
+void restoreClockFromRtcAfterCacheLoad(int timezoneOffsetMinutes)
+{
+  if (deviceClock.isTimeValid())
+  {
+    return;
+  }
+
+  beginRtcClock();
+
+  unsigned long rtcUtcEpochSeconds = 0;
+
+  if (!loadUtcEpochFromRtc(rtcUtcEpochSeconds))
+  {
+    return;
+  }
+
+  deviceClock.syncFromUtcEpoch(rtcUtcEpochSeconds, timezoneOffsetMinutes, "RTC");
+}
+}
+
 JsonObject FountainConfig::outputStateObject(JsonObject outputConfig)
 {
   JsonObject state = outputConfig["state"].as<JsonObject>();
@@ -196,6 +225,9 @@ bool FountainConfig::loadFromConfigObjectJson(const String &configJson, Fountain
   }
 
   JsonObject config = doc.as<JsonObject>();
+  int timezoneOffsetMinutes = config["timezone_offset_minutes"] | DEFAULT_TIMEZONE_OFFSET_MINUTES;
+
+  restoreClockFromRtcAfterCacheLoad(timezoneOffsetMinutes);
   loadInitialOutputs(config, outputs);
   loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), timeline);
   printDailyTimeline(timeline);
@@ -211,7 +243,7 @@ String FountainConfig::buildCompactCacheJson(JsonObject config)
 
   compact["cache_version"] = 2;
   compact["device_type"] = config["device_type"] | "smart_fountain";
-  compact["timezone_offset_minutes"] = config["timezone_offset_minutes"] | 0;
+  compact["timezone_offset_minutes"] = config["timezone_offset_minutes"] | DEFAULT_TIMEZONE_OFFSET_MINUTES;
 
   JsonObject sourceOutputs = config["outputs"].as<JsonObject>();
   JsonObject targetOutputs = compact["outputs"].to<JsonObject>();

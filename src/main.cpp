@@ -7,37 +7,53 @@
 #include "ConfigCache.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
+#include "DeviceStorage.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
-#include "OfflineTimeline.h"
+#include "LocalControls.h"
+#include "SetupPortal.h"
 #include "WaterLevelSensor.h"
+#include "WifiReset.h"
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
 #endif
 
-// Smart Fountain firmware skeleton.
+// Smart Fountain V1 is a persistent-state device.
 //
-// Main owns the boot/runtime API flow. Product rules that deserve their own
-// isolated home are moving out of this file step by step:
-// - WaterLevelSensor owns water reading/simulation for now.
-// - FountainOutputs owns pump/COB/RGB state application and local pump safety.
-// - HardwareOutputs owns physical GPIO/PWM writes when real hardware is enabled.
-// - FountainConfig owns parsing Laravel config.outputs and daily timeline logs.
-// - ConfigCache owns the compact firmware config stored in ESP32 flash/NVS.
-// - DeviceClock owns server-time sync and local HH:MM calculation.
-// - OfflineTimeline detects the active range and applies cached outputs only
-//   when Laravel/Wi-Fi/API is unavailable.
+// Online:
+// - fetch Laravel current config/settings
+// - apply outputs
+// - save compact config if changed
+// - keep checking periodically
+//
+// Offline / server unavailable:
+// - keep the last trusted saved/current output state
+// - local buttons and water safety continue to work
+// - do not apply daily timeline ranges or scene presets automatically
+// - do not change outputs only because Laravel disappeared
+//
+// Reboot while offline:
+// - load saved compact config from flash
+// - restore that saved output state
+// - keep that state until Laravel becomes reachable again
+//
+// GPIO33 setup reset is the only exception: setup mode clears Wi-Fi/cache and
+// forces outputs OFF for safety.
 
-const unsigned long CONFIG_FETCH_INTERVAL_MS = 60000;
-const unsigned long STATE_SYNC_INTERVAL_MS = 5000;
-const unsigned long COMMAND_POLL_INTERVAL_MS = 5000;
-const unsigned long OFFLINE_API_RETRY_INTERVAL_MS = 30000;
+const unsigned long CONFIG_FETCH_INTERVAL_MS = 120000;
+const unsigned long STATE_SYNC_INTERVAL_MS = 10000;
+const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const unsigned long OFFLINE_TIMELINE_CHECK_INTERVAL_MS = 30000;
-const int CONFIG_FETCH_MAX_ATTEMPTS = 2;
+const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
+const unsigned long HTTP_TIMEOUT_MS = 5000;
+const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
+const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
+const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
+const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
+const int MAX_CONSECUTIVE_API_FAILURES = 3;
 
 enum CloudControlMode
 {
@@ -50,9 +66,14 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
-unsigned long lastOfflineTimelineCheckAt = 0;
+unsigned long lastNetworkRecoveryAt = 0;
+unsigned long lastNoCommandLogAt = 0;
+unsigned long localStateSyncRetryAt = 0;
 
+int consecutiveApiFailures = 0;
 bool serverReachableRecently = false;
+bool outputStateTrusted = false;
+bool localStateSyncPending = false;
 String serverTimeUtc = "";
 String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
@@ -66,12 +87,16 @@ FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
-OfflineTimeline offlineTimeline;
+LocalControls localControls;
 
-// Forward declarations for helpers used before their definitions.
 void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
+bool processLocalControls();
+bool connectWifi(bool allowDevelopmentFallback = true);
+void registerApiSuccess(const char *requestName);
+void registerApiFailure(const char *requestName, int statusCode);
+void recoverNetworkIfNeeded(const char *reason);
 
 bool isWifiConnected()
 {
@@ -80,32 +105,111 @@ bool isWifiConnected()
 
 bool isOfflineControlMode()
 {
-  // Offline timeline should only change outputs when cloud control is not
-  // available. While Laravel is reachable, dashboard commands remain primary.
   return !isWifiConnected() || !serverReachableRecently;
-}
-
-unsigned long activeApiInterval(unsigned long normalInterval)
-{
-  // Keep fast 5s API cadence while online. When Laravel/API is unavailable,
-  // slow retries to reduce socket-error spam while local safety/timeline continue.
-  return isOfflineControlMode() ? OFFLINE_API_RETRY_INTERVAL_MS : normalInterval;
 }
 
 void syncHardwareOutputs()
 {
-  // Safe no-op until SMART_FOUNTAIN_HARDWARE_ENABLED is set to 1 in HardwarePins.h.
   hardwareOutputs.apply(outputs);
+}
+
+void markOutputStateTrusted(const char *reason)
+{
+  if (!outputStateTrusted)
+  {
+    Serial.print("Output state trusted: ");
+    Serial.println(reason);
+  }
+
+  outputStateTrusted = true;
+}
+
+void markOutputStateUntrusted(const char *reason)
+{
+  outputStateTrusted = false;
+  Serial.print("Output state untrusted: ");
+  Serial.println(reason);
+}
+
+void forceAllOutputsOff(const char *reason)
+{
+  outputs.pumpEnabled = false;
+  outputs.pumpSpeedPercent = 0;
+  outputs.cobEnabled = false;
+  outputs.cobBrightnessPercent = 0;
+  outputs.rgbEnabled = false;
+  outputs.rgbBrightnessPercent = 0;
+  outputs.rgbColor = "#000000";
+  outputs.rgbEffect = "solid";
+
+  Serial.print("All outputs forced OFF: ");
+  Serial.println(reason);
+  syncHardwareOutputs();
 }
 
 void applySafetyAndSyncHardware()
 {
-  // The only safe path to physical outputs: refresh water reading first, enforce
-  // pump safety, then write GPIO/PWM. This prevents cached/cloud pump ON state
-  // from briefly reaching hardware when the float switch says low water.
   updateWaterReadings();
   fountainOutputs.enforceWaterSafety(outputs, readings);
   syncHardwareOutputs();
+}
+
+void queueLocalStateSync(const char *reason)
+{
+  markOutputStateTrusted(reason);
+  localStateSyncPending = true;
+  localStateSyncRetryAt = 0;
+  Serial.println("Local output change queued for Laravel state sync.");
+}
+
+bool processLocalControls()
+{
+  localControls.update();
+
+  bool changed = false;
+
+  if (localControls.consumePumpToggleRequest())
+  {
+    updateWaterReadings();
+
+    bool requestedEnabled = !outputs.pumpEnabled;
+
+    if (requestedEnabled && readings.waterLow)
+    {
+      outputs.pumpEnabled = false;
+      outputs.pumpSpeedPercent = 0;
+      Serial.println("Local pump button ignored because water_low=true.");
+    }
+    else
+    {
+      outputs.pumpEnabled = requestedEnabled;
+      outputs.pumpSpeedPercent = requestedEnabled ? 100 : 0;
+      changed = true;
+
+      Serial.print("Pump state applied from local_button: enabled=");
+      Serial.print(outputs.pumpEnabled ? "true" : "false");
+      Serial.println(" mode=on_off");
+    }
+  }
+
+  if (localControls.consumeCobToggleRequest())
+  {
+    outputs.cobEnabled = !outputs.cobEnabled;
+    outputs.cobBrightnessPercent = outputs.cobEnabled ? 100 : 0;
+    changed = true;
+
+    Serial.print("COB state applied from local_button: enabled=");
+    Serial.print(outputs.cobEnabled ? "true" : "false");
+    Serial.println(" mode=on_off");
+  }
+
+  if (changed)
+  {
+    queueLocalStateSync("local button changed output state");
+    applySafetyAndSyncHardware();
+  }
+
+  return changed;
 }
 
 void logCloudModeIfChanged()
@@ -127,11 +231,11 @@ void logCloudModeIfChanged()
 
   if (!isWifiConnected())
   {
-    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, cached local schedule may run.");
+    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, local buttons/water safety active, keeping last trusted saved output state.");
   }
   else
   {
-    Serial.println("Cloud mode: OFFLINE - API unavailable, cached local schedule may run.");
+    Serial.println("Cloud mode: OFFLINE - API unavailable, local buttons/water safety active, keeping last trusted saved output state.");
   }
 }
 
@@ -146,44 +250,15 @@ void enforceWaterSafety()
   syncHardwareOutputs();
 }
 
-void updateOfflineTimeline(unsigned long now)
-{
-  if (now - lastOfflineTimelineCheckAt < OFFLINE_TIMELINE_CHECK_INTERVAL_MS)
-  {
-    return;
-  }
-
-  if (isOfflineControlMode())
-  {
-    bool applied = offlineTimeline.applyActiveRangeIfNeeded(
-        dailyTimeline,
-        deviceClock,
-        outputs,
-        readings,
-        fountainOutputs);
-
-    if (applied)
-    {
-      applySafetyAndSyncHardware();
-      Serial.println("OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.");
-    }
-  }
-  else
-  {
-    offlineTimeline.update(dailyTimeline, deviceClock);
-  }
-
-  lastOfflineTimelineCheckAt = now;
-}
-
-void loadCachedConfigIfAvailable()
+bool loadCachedConfigIfAvailable()
 {
   String cachedConfigJson = loadCachedConfigJson();
 
   if (cachedConfigJson.length() == 0)
   {
     Serial.println("No cached Laravel config found.");
-    return;
+    markOutputStateUntrusted("no cached Laravel config; safe boot OFF must not sync to Laravel");
+    return false;
   }
 
   Serial.println();
@@ -195,28 +270,40 @@ void loadCachedConfigIfAvailable()
   if (!parsed)
   {
     Serial.println("Cached Laravel config exists but could not be parsed.");
-    return;
+    markOutputStateUntrusted("cached Laravel config parse failed; safe boot OFF must not sync to Laravel");
+    return false;
   }
 
+  markOutputStateTrusted("cached Laravel config loaded");
   applySafetyAndSyncHardware();
-  Serial.println("Cached Laravel config loaded.");
+  Serial.println("Cached Laravel config loaded. Device will keep this state if Laravel is unavailable.");
+  return true;
 }
 
-void connectWifi()
+bool connectWithCredentials(const String &ssid, const String &password)
 {
+  if (ssid.length() == 0)
+  {
+    Serial.println("Cannot connect to Wi-Fi: SSID is empty.");
+    return false;
+  }
+
   Serial.println();
-  Serial.print("Connecting Wi-Fi: ");
-  Serial.println(WIFI_SSID);
+  Serial.println("Connecting Wi-Fi...");
+  Serial.print("SSID: ");
+  Serial.println(ssid);
 
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  WiFi.begin(ssid.c_str(), password.c_str());
 
   unsigned long startedAt = millis();
 
   while (!isWifiConnected() && millis() - startedAt < 15000)
   {
-    delay(500);
+    processLocalControls();
+    applySafetyAndSyncHardware();
+    delay(100);
     Serial.print(".");
   }
 
@@ -226,11 +313,110 @@ void connectWifi()
   {
     Serial.print("Wi-Fi connected. IP: ");
     Serial.println(WiFi.localIP());
+    Serial.print("RSSI dBm: ");
+    Serial.println(WiFi.RSSI());
+    return true;
+  }
+
+  Serial.println("Wi-Fi connection failed.");
+  return false;
+}
+
+bool connectWifi(bool allowDevelopmentFallback)
+{
+  StoredDeviceConfig storedConfig = loadStoredDeviceConfig();
+
+  if (storedConfig.hasWifiCredentials)
+  {
+    Serial.println("Trying stored Wi-Fi credentials...");
+
+    if (connectWithCredentials(storedConfig.wifiSsid, storedConfig.wifiPassword))
+    {
+      return true;
+    }
+
+    Serial.println("Stored Wi-Fi failed.");
   }
   else
   {
-    Serial.println("Wi-Fi connection failed. Device will retry later.");
+    Serial.println("No stored Wi-Fi credentials found.");
   }
+
+  if (allowDevelopmentFallback)
+  {
+    Serial.println("Trying DeviceSecrets Wi-Fi as development fallback...");
+
+    if (connectWithCredentials(WIFI_SSID, WIFI_PASSWORD))
+    {
+      return true;
+    }
+
+    Serial.println("DeviceSecrets Wi-Fi failed.");
+  }
+
+  Serial.println("Wi-Fi unavailable. Will retry later. Setup hotspot starts only after GPIO33 Wi-Fi reset.");
+  return false;
+}
+
+void recoverNetworkIfNeeded(const char *reason)
+{
+  if (consecutiveApiFailures < MAX_CONSECUTIVE_API_FAILURES)
+  {
+    return;
+  }
+
+  unsigned long now = millis();
+
+  if (now - lastNetworkRecoveryAt < WIFI_RECOVERY_COOLDOWN_MS)
+  {
+    return;
+  }
+
+  lastNetworkRecoveryAt = now;
+
+  Serial.println();
+  Serial.print("API failure recovery: restarting Wi-Fi after repeated failures. reason=");
+  Serial.println(reason);
+
+  WiFi.disconnect(true);
+  delay(150);
+  WiFi.mode(WIFI_OFF);
+  delay(300);
+
+  consecutiveApiFailures = 0;
+  serverReachableRecently = false;
+  lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
+
+  connectWifi(true);
+}
+
+void registerApiSuccess(const char *requestName)
+{
+  if (consecutiveApiFailures > 0)
+  {
+    Serial.print("API recovered after ");
+    Serial.print(consecutiveApiFailures);
+    Serial.print(" failure(s). request=");
+    Serial.println(requestName);
+  }
+
+  consecutiveApiFailures = 0;
+  serverReachableRecently = true;
+}
+
+void registerApiFailure(const char *requestName, int statusCode)
+{
+  consecutiveApiFailures++;
+  serverReachableRecently = false;
+
+  Serial.print("API failure #");
+  Serial.print(consecutiveApiFailures);
+  Serial.print(" request=");
+  Serial.print(requestName);
+  Serial.print(" status=");
+  Serial.println(statusCode);
+
+  recoverNetworkIfNeeded(requestName);
 }
 
 bool getWithRetry(const String &url, String &response, int &statusCode)
@@ -241,23 +427,13 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
   for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
   {
     HTTPClient http;
-    http.setTimeout(7000);
+    http.setTimeout(HTTP_TIMEOUT_MS);
     http.begin(url);
     apiClient.addDeviceHeaders(http);
 
-    if (attempt == 1)
-    {
-      Serial.println();
-      Serial.print("GET ");
-      Serial.println(url);
-    }
-    else
-    {
-      Serial.print("Retry GET attempt ");
-      Serial.print(attempt);
-      Serial.print(" ");
-      Serial.println(url);
-    }
+    Serial.println();
+    Serial.print("GET ");
+    Serial.println(url);
 
     statusCode = http.GET();
     response = http.getString();
@@ -271,11 +447,9 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
       return true;
     }
 
-    // -11 can happen around Wi-Fi reconnect or a just-started Laravel server.
-    // A short retry improves boot reliability without blocking local safety.
     if (attempt < CONFIG_FETCH_MAX_ATTEMPTS)
     {
-      delay(300);
+      delay(100);
     }
   }
 
@@ -301,12 +475,10 @@ bool fetchConfig()
       Serial.println(response);
     }
 
-    serverReachableRecently = false;
+    registerApiFailure("config", statusCode);
     return false;
   }
 
-  // ArduinoJson 7 JsonDocument uses heap-backed storage. This avoids large
-  // stack allocations on ESP32-C3 while parsing Laravel config responses.
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
 
@@ -314,11 +486,11 @@ bool fetchConfig()
   {
     Serial.print("Config JSON parse failed: ");
     Serial.println(error.c_str());
-    serverReachableRecently = false;
+    registerApiFailure("config_parse", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("config");
   serverTimeUtc = doc["server_time_utc"] | "";
 
   JsonObject config = doc["config"].as<JsonObject>();
@@ -342,12 +514,11 @@ bool fetchConfig()
   }
 
   fountainConfig.loadInitialOutputs(config, outputs);
+  markOutputStateTrusted("fresh Laravel config fetched");
   applySafetyAndSyncHardware();
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
-  // Cache only compact firmware data. The full Laravel config is too large for
-  // Preferences/NVS and contains dashboard-only fields.
   String configJson = fountainConfig.buildCompactCacheJson(config);
 
   Serial.print("Compact config cache JSON length: ");
@@ -363,14 +534,12 @@ bool fetchConfig()
 
 String buildStatePayload(const char *source)
 {
-  // /api/device/state is the trusted hardware truth for persistent-state devices.
-  // The backend may know the requested state, but the firmware reports actual state.
   JsonDocument doc;
 
   doc["device_uuid"] = DEVICE_UUID;
   doc["device_type"] = "smart_fountain";
   doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["operation_state"] = "running";
+  doc["operation_state"] = readings.waterLow ? "water_low_lockout" : "running";
 
   JsonObject outputJson = doc["outputs"].to<JsonObject>();
 
@@ -409,6 +578,12 @@ bool postState(const char *source = "device_state")
     return false;
   }
 
+  if (!outputStateTrusted)
+  {
+    Serial.println("State sync skipped: output state is not trusted yet. Safe boot OFF will not be pushed to Laravel.");
+    return false;
+  }
+
   updateWaterReadings();
   enforceWaterSafety();
 
@@ -416,7 +591,7 @@ bool postState(const char *source = "device_state")
   String payload = buildStatePayload(source);
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -436,13 +611,44 @@ bool postState(const char *source = "device_state")
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("state", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("state");
   Serial.println("State synced.");
   return true;
+}
+
+bool syncLocalStateIfDue(unsigned long now)
+{
+  if (!localStateSyncPending)
+  {
+    return false;
+  }
+
+  if (!isWifiConnected())
+  {
+    return false;
+  }
+
+  if (localStateSyncRetryAt != 0 && now - localStateSyncRetryAt < LOCAL_STATE_SYNC_RETRY_MS)
+  {
+    return false;
+  }
+
+  Serial.println("Syncing local button output change to Laravel...");
+
+  if (postState("local_button"))
+  {
+    localStateSyncPending = false;
+    localStateSyncRetryAt = 0;
+    lastStateSyncAt = now;
+    return true;
+  }
+
+  localStateSyncRetryAt = now;
+  return false;
 }
 
 bool ackCommand(int commandId, const char *status, const char *message = nullptr)
@@ -468,7 +674,7 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   serializeJson(doc, payload);
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
 
@@ -487,11 +693,11 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("ack", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("ack");
   return true;
 }
 
@@ -560,8 +766,6 @@ void processCommand(JsonObject command)
   Serial.print(" type=");
   Serial.println(commandType);
 
-  // For persistent-state products, executed means "state applied", not
-  // "operation completed". The final POST /api/device/state remains truth.
   ackCommand(commandId, "acknowledged");
 
   bool applied = false;
@@ -583,6 +787,7 @@ void processCommand(JsonObject command)
 
   if (applied)
   {
+    markOutputStateTrusted("cloud command applied");
     ackCommand(commandId, "executed");
   }
   else
@@ -604,29 +809,27 @@ bool pollCommands()
   String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
-  http.setTimeout(7000);
+  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
   http.begin(url);
   apiClient.addDeviceHeaders(http);
-
-  Serial.println();
-  Serial.print("GET ");
-  Serial.println(url);
 
   int statusCode = http.GET();
   String response = http.getString();
   http.end();
 
-  Serial.print("Command HTTP status: ");
-  Serial.println(statusCode);
-
   if (statusCode < 200 || statusCode >= 300)
   {
+    Serial.println();
+    Serial.print("GET ");
+    Serial.println(url);
+    Serial.print("Command HTTP status: ");
+    Serial.println(statusCode);
     Serial.println(response);
-    serverReachableRecently = false;
+    registerApiFailure("commands", statusCode);
     return false;
   }
 
-  serverReachableRecently = true;
+  registerApiSuccess("commands");
 
   JsonDocument doc;
   DeserializationError error = deserializeJson(doc, response);
@@ -635,6 +838,7 @@ bool pollCommands()
   {
     Serial.print("Command JSON parse failed: ");
     Serial.println(error.c_str());
+    registerApiFailure("commands_parse", statusCode);
     return false;
   }
 
@@ -642,9 +846,22 @@ bool pollCommands()
 
   if (command.isNull())
   {
-    Serial.println("No pending command.");
-    return true;
+    unsigned long now = millis();
+
+    if (now - lastNoCommandLogAt >= NO_COMMAND_LOG_INTERVAL_MS)
+    {
+      Serial.println("No pending command.");
+      lastNoCommandLogAt = now;
+    }
+
+    return false;
   }
+
+  Serial.println();
+  Serial.print("GET ");
+  Serial.println(url);
+  Serial.print("Command HTTP status: ");
+  Serial.println(statusCode);
 
   processCommand(command);
   return true;
@@ -661,16 +878,30 @@ void setup()
   Serial.println(FIRMWARE_VERSION);
 
   beginConfigCache();
+  beginDeviceStorage();
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
+  localControls.begin();
   updateWaterReadings();
+  forceAllOutputsOff("safe boot hardware default");
+  markOutputStateUntrusted("safe boot OFF is hardware-only until cached or fresh config loads");
 
-  // Cached config gives the device a useful last-known output/timeline state
-  // before Laravel is contacted. This is the foundation for offline timeline.
+  checkWifiResetOnBoot();
+  bool wifiSetupRequested = consumeWifiSetupPortalRequest();
+
+  if (wifiSetupRequested)
+  {
+    Serial.println("Wi-Fi setup was requested. Setup mode will not load cached config or run local timeline.");
+    forceAllOutputsOff("Wi-Fi setup mode");
+    markOutputStateUntrusted("Wi-Fi setup mode output OFF must not sync to Laravel");
+    startSetupPortal();
+    logCloudModeIfChanged();
+    return;
+  }
+
   loadCachedConfigIfAvailable();
-
-  connectWifi();
+  connectWifi(true);
 
   if (isWifiConnected())
   {
@@ -682,9 +913,9 @@ void setup()
     lastConfigFetchAt = now;
     lastStateSyncAt = now;
     lastCommandPollAt = now;
-    lastOfflineTimelineCheckAt = now;
   }
 
+  Serial.println("Local controls and water safety are active during runtime.");
   logCloudModeIfChanged();
 }
 
@@ -692,19 +923,25 @@ void loop()
 {
   unsigned long now = millis();
 
-  // Local readings and safety run before network work so slow/failing HTTP
-  // cannot delay pump protection or cached offline schedule fallback.
+  processLocalControls();
+
+  if (isSetupPortalActive())
+  {
+    handleSetupPortal();
+    delay(20);
+    return;
+  }
+
   updateWaterReadings();
   enforceWaterSafety();
   logCloudModeIfChanged();
-  updateOfflineTimeline(now);
 
   if (!isWifiConnected())
   {
     if (now - lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS)
     {
       Serial.println("Wi-Fi offline. Retrying connection...");
-      connectWifi();
+      connectWifi(true);
       lastWifiRetryAt = now;
     }
 
@@ -712,29 +949,38 @@ void loop()
     return;
   }
 
-  unsigned long configInterval = activeApiInterval(CONFIG_FETCH_INTERVAL_MS);
-  unsigned long stateInterval = activeApiInterval(STATE_SYNC_INTERVAL_MS);
-  unsigned long commandInterval = activeApiInterval(COMMAND_POLL_INTERVAL_MS);
-
-  if (now - lastConfigFetchAt >= configInterval)
+  if (syncLocalStateIfDue(now))
   {
-    fetchConfig();
     logCloudModeIfChanged();
-    lastConfigFetchAt = now;
+    delay(20);
+    return;
   }
 
-  if (now - lastStateSyncAt >= stateInterval)
+  if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
+  {
+    bool commandProcessed = pollCommands();
+    logCloudModeIfChanged();
+    lastCommandPollAt = now;
+
+    if (commandProcessed)
+    {
+      delay(20);
+      return;
+    }
+  }
+
+  if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
   {
     postState("device_state");
     logCloudModeIfChanged();
     lastStateSyncAt = now;
   }
 
-  if (now - lastCommandPollAt >= commandInterval)
+  if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
   {
-    pollCommands();
+    fetchConfig();
     logCloudModeIfChanged();
-    lastCommandPollAt = now;
+    lastConfigFetchAt = now;
   }
 
   delay(20);
