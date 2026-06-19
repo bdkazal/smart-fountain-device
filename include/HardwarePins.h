@@ -1,8 +1,8 @@
 #pragma once
 
-// Prototype hardware pin configuration for the Biztola Smart Fountain.
+// Hardware pin configuration for the Biztola Smart Fountain on ESP32 DevKit V1 / ESP32-WROOM-32.
 //
-// Current V1 hardware test scope:
+// Current hardware test scope:
 // - Pump controlled through LR7843 MOSFET module
 // - Normal switch / float switch connected to GPIO and GND for water safety
 // - COB controlled as ON/OFF through a MOSFET/driver signal
@@ -14,13 +14,14 @@
 // - ESP32 GND, power-supply GND, MOSFET GND, and buck GND must be common.
 // - Keep the pump in water before ON testing.
 // - Do not connect LEDs directly to ESP32 GPIO.
+// - Avoid ESP32 flash pins GPIO6-GPIO11 and boot strapping pins for safety inputs.
 
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
 
 // Pump output through LR7843 MOSFET module.
-// Wiring: GPIO5 -> LR7843 signal/input.
+// Wiring: GPIO25 -> LR7843 signal/input.
 // ACTIVE_HIGH means GPIO HIGH turns the pump MOSFET/load ON.
-#define PUMP_OUTPUT_PIN 5
+#define PUMP_OUTPUT_PIN 25
 #define PUMP_OUTPUT_ACTIVE_HIGH 1
 #define PUMP_PWM_ENABLED 0
 #define PUMP_PWM_CHANNEL 1
@@ -37,19 +38,19 @@
 #define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / temporary normal switch input.
-// Wiring: GPIO0 -> switch -> GND.
+// Wiring: GPIO32 -> switch -> GND.
 // Internal pull-up keeps the pin HIGH when the switch is open.
 // ACTIVE_LOW means closed switch reads LOW and becomes water_low=true.
-#define WATER_LEVEL_SWITCH_PIN 0
+#define WATER_LEVEL_SWITCH_PIN 32
 #define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
 
 // COB output through a MOSFET/driver signal.
-// Wiring: GPIO6 -> COB MOSFET signal/input.
+// Wiring: GPIO26 -> COB MOSFET signal/input.
 // ACTIVE_HIGH means GPIO HIGH turns the COB output ON.
-// V1 is ON/OFF only. No brightness/PWM dimming yet.
-#define COB_OUTPUT_PIN 6
+// Current hardware is ON/OFF only. No brightness/PWM dimming yet.
+#define COB_OUTPUT_PIN 26
 #define COB_OUTPUT_ACTIVE_HIGH 1
 #define COB_PWM_PIN -1
 #define COB_PWM_CHANNEL 0
@@ -66,9 +67,9 @@
 #define RGB_HARDWARE_TYPE_ANALOG_PWM 1
 #define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_ANALOG_PWM
 #define RGB_DATA_PIN -1
-#define RGB_RED_PIN 2
-#define RGB_GREEN_PIN 3
-#define RGB_BLUE_PIN 4
+#define RGB_RED_PIN 27
+#define RGB_GREEN_PIN 14
+#define RGB_BLUE_PIN 13
 #define RGB_RED_CHANNEL 2
 #define RGB_GREEN_CHANNEL 3
 #define RGB_BLUE_CHANNEL 4
