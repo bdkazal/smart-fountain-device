@@ -81,15 +81,9 @@
 #define COB_PWM_FREQUENCY 5000
 #define COB_PWM_RESOLUTION_BITS 8
 
-// RGB / accent light hardware type.
-// Laravel still sends this as rgb_light: enabled, brightness_percent, color, effect.
-// Firmware now renders that logical rgb_light state to a 12 LED WS2812B/NeoPixel output.
-#define RGB_HARDWARE_TYPE_NONE 0
-#define RGB_HARDWARE_TYPE_ANALOG_PWM 1
-#define RGB_HARDWARE_TYPE_NEOPIXEL 2
-#define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_NEOPIXEL
-
 // WS2812B / NeoPixel ring or strip.
+// Laravel still sends this as logical rgb_light: enabled, brightness_percent, color, effect.
+// Firmware renders that logical state to a 12 LED WS2812B/NeoPixel output.
 // Wiring:
 // NeoPixel 5V  -> external 5V supply +
 // NeoPixel GND -> external 5V supply -
@@ -110,14 +104,3 @@
 
 // Keep green at 100% for NeoPixel color accuracy.
 #define RGB_GREEN_CALIBRATION_PERCENT 100
-
-// Legacy analog PWM pin config kept for fallback/testing if RGB_HARDWARE_TYPE is changed back.
-#define RGB_RED_PIN 27
-#define RGB_GREEN_PIN 14
-#define RGB_BLUE_PIN 13
-#define RGB_RED_CHANNEL 2
-#define RGB_GREEN_CHANNEL 3
-#define RGB_BLUE_CHANNEL 4
-#define RGB_PWM_FREQUENCY 1000
-#define RGB_PWM_RESOLUTION_BITS 8
-#define RGB_OUTPUT_ACTIVE_HIGH 1
