@@ -26,7 +26,7 @@ void beginDeviceStorage()
 
   Serial.println();
   Serial.println("Device storage initialized.");
-  Serial.println("Storage scope: Wi-Fi credentials + setup portal flag");
+  Serial.println("Storage scope: Wi-Fi credentials + persistent setup portal flag");
 }
 
 StoredDeviceConfig loadStoredDeviceConfig()
@@ -72,7 +72,7 @@ bool saveWifiCredentials(const String &ssid, const String &wifiPassword)
 
   preferences.putString(KEY_WIFI_SSID, ssid);
   preferences.putString(KEY_WIFI_PASS, wifiPassword);
-  removePreferenceKeyIfExists(KEY_WIFI_SETUP_REQUESTED);
+  clearWifiSetupPortalRequest();
 
   Serial.println("Wi-Fi credentials saved to flash.");
   Serial.println("Wi-Fi setup portal request cleared.");
@@ -91,19 +91,29 @@ void clearStoredWifiCredentials()
 void requestWifiSetupPortalOnNextBoot()
 {
   preferences.putBool(KEY_WIFI_SETUP_REQUESTED, true);
-  Serial.println("Wi-Fi setup portal requested for next boot.");
+  Serial.println("Wi-Fi setup portal requested and will remain required until valid Wi-Fi is saved.");
+}
+
+void clearWifiSetupPortalRequest()
+{
+  removePreferenceKeyIfExists(KEY_WIFI_SETUP_REQUESTED);
+}
+
+bool isWifiSetupPortalRequested()
+{
+  return preferences.getBool(KEY_WIFI_SETUP_REQUESTED, false);
 }
 
 bool consumeWifiSetupPortalRequest()
 {
-  bool requested = preferences.getBool(KEY_WIFI_SETUP_REQUESTED, false);
+  // Kept for compatibility with older main.cpp flow.
+  // This no longer clears the flag; setup mode remains required until credentials are saved.
+  bool requested = isWifiSetupPortalRequested();
 
-  if (!requested)
+  if (requested)
   {
-    return false;
+    Serial.println("Wi-Fi setup portal request is active.");
   }
 
-  removePreferenceKeyIfExists(KEY_WIFI_SETUP_REQUESTED);
-  Serial.println("Wi-Fi setup portal request consumed.");
-  return true;
+  return requested;
 }
