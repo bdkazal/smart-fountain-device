@@ -15,4 +15,6 @@ StoredDeviceConfig loadStoredDeviceConfig();
 bool saveWifiCredentials(const String &ssid, const String &password);
 void clearStoredWifiCredentials();
 void requestWifiSetupPortalOnNextBoot();
+void clearWifiSetupPortalRequest();
+bool isWifiSetupPortalRequested();
 bool consumeWifiSetupPortalRequest();
