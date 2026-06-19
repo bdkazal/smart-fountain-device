@@ -22,6 +22,5 @@ private:
   bool isAnimatedEffect(const String &effect) const;
   unsigned long safeEffectPeriod(unsigned long configuredPeriod, unsigned long fallbackPeriod) const;
   void renderNeoPixels(int red, int green, int blue);
-  int rgbDutyFromChannel(int channelValue, int brightnessPercent) const;
   void parseRgbColor(const String &hexColor, int &red, int &green, int &blue) const;
 };
