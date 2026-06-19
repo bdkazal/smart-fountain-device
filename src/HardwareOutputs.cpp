@@ -1,5 +1,7 @@
 #include "HardwareOutputs.h"
 
+#include <FastLED.h>
+
 #if __has_include("HardwarePins.h")
 #include "HardwarePins.h"
 #else
@@ -78,6 +80,10 @@
 #define RGB_HARDWARE_TYPE_ANALOG_PWM 1
 #endif
 
+#ifndef RGB_HARDWARE_TYPE_NEOPIXEL
+#define RGB_HARDWARE_TYPE_NEOPIXEL 2
+#endif
+
 #ifndef RGB_HARDWARE_TYPE
 #define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_NONE
 #endif
@@ -119,8 +125,29 @@
 #endif
 
 #ifndef RGB_GREEN_CALIBRATION_PERCENT
-#define RGB_GREEN_CALIBRATION_PERCENT 35
+#define RGB_GREEN_CALIBRATION_PERCENT 100
 #endif
+
+#ifndef NEOPIXEL_DATA_PIN
+#define NEOPIXEL_DATA_PIN 27
+#endif
+
+#ifndef NEOPIXEL_COUNT
+#define NEOPIXEL_COUNT 12
+#endif
+
+#ifndef NEOPIXEL_MAX_BRIGHTNESS
+#define NEOPIXEL_MAX_BRIGHTNESS 160
+#endif
+
+#ifndef NEOPIXEL_COLOR_ORDER_GRB
+#define NEOPIXEL_COLOR_ORDER_GRB 1
+#endif
+
+namespace
+{
+CRGB neoPixels[NEOPIXEL_COUNT];
+}
 
 void HardwareOutputs::begin()
 {
@@ -216,6 +243,27 @@ void HardwareOutputs::begin()
     Serial.print(RGB_GREEN_CALIBRATION_PERCENT);
     Serial.println("%");
     Serial.println("RGB analog effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
+  }
+  else if (RGB_HARDWARE_TYPE == RGB_HARDWARE_TYPE_NEOPIXEL && NEOPIXEL_COUNT > 0)
+  {
+#if NEOPIXEL_COLOR_ORDER_GRB == 1
+    FastLED.addLeds<WS2812B, NEOPIXEL_DATA_PIN, GRB>(neoPixels, NEOPIXEL_COUNT);
+#else
+    FastLED.addLeds<WS2812B, NEOPIXEL_DATA_PIN, RGB>(neoPixels, NEOPIXEL_COUNT);
+#endif
+    FastLED.setBrightness(constrain(NEOPIXEL_MAX_BRIGHTNESS, 0, 255));
+    fill_solid(neoPixels, NEOPIXEL_COUNT, CRGB::Black);
+    FastLED.show();
+
+    Serial.print("HardwareOutputs NeoPixel ready: data=GPIO");
+    Serial.print(NEOPIXEL_DATA_PIN);
+    Serial.print(" count=");
+    Serial.print(NEOPIXEL_COUNT);
+    Serial.print(" max_brightness=");
+    Serial.print(NEOPIXEL_MAX_BRIGHTNESS);
+    Serial.print(" color_order=");
+    Serial.println(NEOPIXEL_COLOR_ORDER_GRB == 1 ? "GRB" : "RGB");
+    Serial.println("NeoPixel effects ready: solid, breathing, slow_rainbow, warm_glow, water_shimmer, night_mode.");
   }
   else
   {
@@ -408,7 +456,17 @@ void HardwareOutputs::applyCob(const FountainOutputState &outputs)
 
 void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
 {
-  if (RGB_HARDWARE_TYPE != RGB_HARDWARE_TYPE_ANALOG_PWM || RGB_RED_PIN < 0 || RGB_GREEN_PIN < 0 || RGB_BLUE_PIN < 0)
+  if (RGB_HARDWARE_TYPE != RGB_HARDWARE_TYPE_ANALOG_PWM && RGB_HARDWARE_TYPE != RGB_HARDWARE_TYPE_NEOPIXEL)
+  {
+    return;
+  }
+
+  if (RGB_HARDWARE_TYPE == RGB_HARDWARE_TYPE_ANALOG_PWM && (RGB_RED_PIN < 0 || RGB_GREEN_PIN < 0 || RGB_BLUE_PIN < 0))
+  {
+    return;
+  }
+
+  if (RGB_HARDWARE_TYPE == RGB_HARDWARE_TYPE_NEOPIXEL && NEOPIXEL_COUNT <= 0)
   {
     return;
   }
@@ -479,6 +537,64 @@ void HardwareOutputs::applyRgb(const FountainOutputState &outputs)
   else
   {
     hardwareMode = "solid";
+  }
+
+  if (RGB_HARDWARE_TYPE == RGB_HARDWARE_TYPE_NEOPIXEL)
+  {
+    int renderedRed = (constrain(red, 0, 255) * brightness) / 100;
+    int renderedGreen = (constrain(green, 0, 255) * brightness) / 100;
+    int renderedBlue = (constrain(blue, 0, 255) * brightness) / 100;
+
+    fill_solid(neoPixels, NEOPIXEL_COUNT, CRGB(renderedRed, renderedGreen, renderedBlue));
+    FastLED.show();
+
+    if (!hasLoggedRgbLevel ||
+        lastRgbOn != outputs.rgbEnabled ||
+        lastRgbBrightnessPercent != outputs.rgbBrightnessPercent ||
+        lastRgbColor != outputs.rgbColor ||
+        lastRgbEffect != outputs.rgbEffect ||
+        lastRgbRedDuty != renderedRed ||
+        lastRgbGreenDuty != renderedGreen ||
+        lastRgbBlueDuty != renderedBlue)
+    {
+      Serial.print("HardwareOutputs NeoPixel rendered rgb=");
+      Serial.print(renderedRed);
+      Serial.print(",");
+      Serial.print(renderedGreen);
+      Serial.print(",");
+      Serial.print(renderedBlue);
+      Serial.print(" source_rgb=");
+      Serial.print(red);
+      Serial.print(",");
+      Serial.print(green);
+      Serial.print(",");
+      Serial.print(blue);
+      Serial.print(" mode=");
+      Serial.print(hardwareMode);
+      Serial.print(" data=GPIO");
+      Serial.print(NEOPIXEL_DATA_PIN);
+      Serial.print(" count=");
+      Serial.print(NEOPIXEL_COUNT);
+      Serial.print(" enabled=");
+      Serial.print(outputs.rgbEnabled ? "true" : "false");
+      Serial.print(" brightness=");
+      Serial.print(outputs.rgbBrightnessPercent);
+      Serial.print(" color=");
+      Serial.print(outputs.rgbColor);
+      Serial.print(" effect=");
+      Serial.println(outputs.rgbEffect);
+
+      hasLoggedRgbLevel = true;
+      lastRgbOn = outputs.rgbEnabled;
+      lastRgbBrightnessPercent = outputs.rgbBrightnessPercent;
+      lastRgbColor = outputs.rgbColor;
+      lastRgbEffect = outputs.rgbEffect;
+      lastRgbRedDuty = renderedRed;
+      lastRgbGreenDuty = renderedGreen;
+      lastRgbBlueDuty = renderedBlue;
+    }
+
+    return;
   }
 
   int redDuty = rgbDutyFromChannel(red, brightness);
