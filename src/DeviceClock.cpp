@@ -1,5 +1,7 @@
 #include "DeviceClock.h"
 
+#include "RtcClock.h"
+
 bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOffsetMinutesValue)
 {
   unsigned long parsedEpochSeconds = 0;
@@ -11,7 +13,15 @@ bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOf
     return false;
   }
 
-  return syncFromUtcEpoch(parsedEpochSeconds, timezoneOffsetMinutesValue, "Laravel UTC");
+  bool synced = syncFromUtcEpoch(parsedEpochSeconds, timezoneOffsetMinutesValue, "Laravel UTC");
+
+  if (synced)
+  {
+    beginRtcClock();
+    saveUtcEpochToRtc(utcEpochSeconds());
+  }
+
+  return synced;
 }
 
 bool DeviceClock::syncFromUtcEpoch(unsigned long utcEpochSecondsValue, int timezoneOffsetMinutesValue, const char *sourceLabel)
