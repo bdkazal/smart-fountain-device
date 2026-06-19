@@ -76,6 +76,14 @@
 #define NEOPIXEL_MAX_BRIGHTNESS 160
 #define NEOPIXEL_COLOR_ORDER_GRB 1
 
+// NeoPixel effect timing.
+// Higher period values make transitions slower and calmer.
+#define NEOPIXEL_FRAME_INTERVAL_MS 50
+#define RGB_BREATHING_PERIOD_MS 10000
+#define RGB_SLOW_RAINBOW_PERIOD_MS 36000
+#define RGB_WARM_GLOW_PERIOD_MS 14000
+#define RGB_WATER_SHIMMER_PERIOD_MS 9000
+
 // Keep green at 100% for NeoPixel color accuracy.
 #define RGB_GREEN_CALIBRATION_PERCENT 100
 
