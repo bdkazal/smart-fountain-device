@@ -8,14 +8,6 @@
 #include "HardwarePins.example.h"
 #endif
 
-#ifndef RGB_HARDWARE_TYPE_NEOPIXEL
-#define RGB_HARDWARE_TYPE_NEOPIXEL 2
-#endif
-
-#ifndef RGB_HARDWARE_TYPE
-#define RGB_HARDWARE_TYPE RGB_HARDWARE_TYPE_NEOPIXEL
-#endif
-
 #ifndef RGB_GREEN_CALIBRATION_PERCENT
 #define RGB_GREEN_CALIBRATION_PERCENT 100
 #endif
@@ -65,9 +57,9 @@ bool frameRendered = false;
 
 void RgbOutputDriver::begin()
 {
-  if (RGB_HARDWARE_TYPE != RGB_HARDWARE_TYPE_NEOPIXEL || NEOPIXEL_COUNT <= 0)
+  if (NEOPIXEL_COUNT <= 0)
   {
-    Serial.println("HardwareOutputs RGB driver is placeholder/TBD.");
+    Serial.println("HardwareOutputs NeoPixel count is not configured.");
     return;
   }
 
@@ -102,7 +94,7 @@ void RgbOutputDriver::begin()
 
 void RgbOutputDriver::apply(const FountainOutputState &outputs)
 {
-  if (RGB_HARDWARE_TYPE != RGB_HARDWARE_TYPE_NEOPIXEL || NEOPIXEL_COUNT <= 0)
+  if (NEOPIXEL_COUNT <= 0)
   {
     return;
   }
@@ -183,8 +175,15 @@ void RgbOutputDriver::apply(const FountainOutputState &outputs)
   int renderedGreen = (constrain(green, 0, 255) * brightness) / 100;
   int renderedBlue = (constrain(blue, 0, 255) * brightness) / 100;
   bool animated = outputs.rgbEnabled && isAnimatedEffect(effect);
-  bool logicalChanged = !hasLoggedRgbLevel || lastRgbOn != outputs.rgbEnabled || lastRgbBrightnessPercent != outputs.rgbBrightnessPercent || lastRgbColor != outputs.rgbColor || lastRgbEffect != outputs.rgbEffect;
-  bool renderedChanged = !frameRendered || lastRgbRedDuty != renderedRed || lastRgbGreenDuty != renderedGreen || lastRgbBlueDuty != renderedBlue;
+  bool logicalChanged = !hasLoggedRgbLevel ||
+                        lastRgbOn != outputs.rgbEnabled ||
+                        lastRgbBrightnessPercent != outputs.rgbBrightnessPercent ||
+                        lastRgbColor != outputs.rgbColor ||
+                        lastRgbEffect != outputs.rgbEffect;
+  bool renderedChanged = !frameRendered ||
+                         lastRgbRedDuty != renderedRed ||
+                         lastRgbGreenDuty != renderedGreen ||
+                         lastRgbBlueDuty != renderedBlue;
 
   if (!logicalChanged && !renderedChanged)
   {
@@ -240,7 +239,11 @@ void RgbOutputDriver::apply(const FountainOutputState &outputs)
 
 bool RgbOutputDriver::isAnimatedEffect(const String &effect) const
 {
-  return effect == "breathing" || effect == "slow_rainbow" || effect == "warm_glow" || effect == "water_shimmer" || effect == "night_mode";
+  return effect == "breathing" ||
+         effect == "slow_rainbow" ||
+         effect == "warm_glow" ||
+         effect == "water_shimmer" ||
+         effect == "night_mode";
 }
 
 unsigned long RgbOutputDriver::safeEffectPeriod(unsigned long configuredPeriod, unsigned long fallbackPeriod) const
@@ -254,11 +257,6 @@ void RgbOutputDriver::renderNeoPixels(int red, int green, int blue)
   FastLED.show();
   lastFrameAt = millis();
   frameRendered = true;
-}
-
-int RgbOutputDriver::rgbDutyFromChannel(int channelValue, int brightnessPercent) const
-{
-  return 0;
 }
 
 void RgbOutputDriver::parseRgbColor(const String &hexColor, int &red, int &green, int &blue) const
