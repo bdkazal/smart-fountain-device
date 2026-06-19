@@ -8,14 +8,16 @@
 // - COB controlled as ON/OFF through a MOSFET/driver signal
 // - 12 LED WS2812B / NeoPixel ring or strip controlled through one data pin
 // - Local pump/COB buttons connected to GPIO and GND
+// - HW-111 / DS3231 RTC on I2C
 //
 // IMPORTANT:
 // - ESP32 GPIO pins must never receive 12V or 5V.
 // - Pump/COB/NeoPixel power must go through the external supply and driver/load path.
-// - ESP32 GND, power-supply GND, MOSFET GND, buck GND, and NeoPixel GND must be common.
+// - ESP32 GND, power-supply GND, MOSFET GND, buck GND, NeoPixel GND, and RTC GND must be common.
 // - Keep the pump in water before ON testing.
 // - Do not connect LEDs directly to ESP32 GPIO except the NeoPixel data input.
 // - Local buttons connect GPIO to GND only; never connect 5V/12V to button GPIO pins.
+// - Power the HW-111 / DS3231 RTC from 3V3 for ESP32-safe I2C pull-ups.
 // - Avoid ESP32 flash pins GPIO6-GPIO11 and boot strapping pins for safety inputs.
 
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
@@ -57,6 +59,16 @@
 #define LOCAL_COB_BUTTON_PIN 19
 #define LOCAL_BUTTONS_ACTIVE_LOW 1
 #define LOCAL_BUTTON_DEBOUNCE_MS 50
+
+// HW-111 / DS3231 RTC I2C.
+// Wiring:
+// RTC VCC -> ESP32 3V3
+// RTC GND -> ESP32 GND
+// RTC SDA -> GPIO21
+// RTC SCL -> GPIO22
+#define RTC_I2C_SDA_PIN 21
+#define RTC_I2C_SCL_PIN 22
+#define RTC_UPDATE_DRIFT_THRESHOLD_SECONDS 5
 
 // COB output through a MOSFET/driver signal.
 // Wiring: GPIO26 -> COB MOSFET signal/input.
