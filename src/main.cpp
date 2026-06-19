@@ -12,6 +12,7 @@
 #include "FountainOutputs.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
+#include "LocalControls.h"
 #include "SetupPortal.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
@@ -30,6 +31,7 @@
 //
 // Offline / server unavailable:
 // - keep the last trusted saved/current output state
+// - local buttons and water safety continue to work
 // - do not apply daily timeline ranges or scene presets automatically
 // - do not change outputs only because Laravel disappeared
 //
@@ -38,7 +40,7 @@
 // - restore that saved output state
 // - keep that state until Laravel becomes reachable again
 //
-// GPIO7 setup reset is the only exception: setup mode clears Wi-Fi/cache and
+// GPIO33 setup reset is the only exception: setup mode clears Wi-Fi/cache and
 // forces outputs OFF for safety.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 120000;
@@ -49,6 +51,7 @@ const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
 const unsigned long HTTP_TIMEOUT_MS = 5000;
 const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
+const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
 const int MAX_CONSECUTIVE_API_FAILURES = 3;
 
@@ -65,10 +68,12 @@ unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastNetworkRecoveryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
+unsigned long localStateSyncRetryAt = 0;
 
 int consecutiveApiFailures = 0;
 bool serverReachableRecently = false;
 bool outputStateTrusted = false;
+bool localStateSyncPending = false;
 String serverTimeUtc = "";
 String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
@@ -82,10 +87,12 @@ FountainDailyTimeline dailyTimeline;
 WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
+LocalControls localControls;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
+bool processLocalControls();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
@@ -147,6 +154,64 @@ void applySafetyAndSyncHardware()
   syncHardwareOutputs();
 }
 
+void queueLocalStateSync(const char *reason)
+{
+  markOutputStateTrusted(reason);
+  localStateSyncPending = true;
+  localStateSyncRetryAt = 0;
+  Serial.println("Local output change queued for Laravel state sync.");
+}
+
+bool processLocalControls()
+{
+  localControls.update();
+
+  bool changed = false;
+
+  if (localControls.consumePumpToggleRequest())
+  {
+    updateWaterReadings();
+
+    bool requestedEnabled = !outputs.pumpEnabled;
+
+    if (requestedEnabled && readings.waterLow)
+    {
+      outputs.pumpEnabled = false;
+      outputs.pumpSpeedPercent = 0;
+      Serial.println("Local pump button ignored because water_low=true.");
+    }
+    else
+    {
+      outputs.pumpEnabled = requestedEnabled;
+      outputs.pumpSpeedPercent = requestedEnabled ? 100 : 0;
+      changed = true;
+
+      Serial.print("Pump state applied from local_button: enabled=");
+      Serial.print(outputs.pumpEnabled ? "true" : "false");
+      Serial.println(" mode=on_off");
+    }
+  }
+
+  if (localControls.consumeCobToggleRequest())
+  {
+    outputs.cobEnabled = !outputs.cobEnabled;
+    outputs.cobBrightnessPercent = outputs.cobEnabled ? 100 : 0;
+    changed = true;
+
+    Serial.print("COB state applied from local_button: enabled=");
+    Serial.print(outputs.cobEnabled ? "true" : "false");
+    Serial.println(" mode=on_off");
+  }
+
+  if (changed)
+  {
+    queueLocalStateSync("local button changed output state");
+    applySafetyAndSyncHardware();
+  }
+
+  return changed;
+}
+
 void logCloudModeIfChanged()
 {
   CloudControlMode currentMode = isOfflineControlMode() ? CLOUD_MODE_OFFLINE : CLOUD_MODE_ONLINE;
@@ -166,11 +231,11 @@ void logCloudModeIfChanged()
 
   if (!isWifiConnected())
   {
-    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, keeping last trusted saved output state.");
+    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, local buttons/water safety active, keeping last trusted saved output state.");
   }
   else
   {
-    Serial.println("Cloud mode: OFFLINE - API unavailable, keeping last trusted saved output state.");
+    Serial.println("Cloud mode: OFFLINE - API unavailable, local buttons/water safety active, keeping last trusted saved output state.");
   }
 }
 
@@ -236,7 +301,9 @@ bool connectWithCredentials(const String &ssid, const String &password)
 
   while (!isWifiConnected() && millis() - startedAt < 15000)
   {
-    delay(500);
+    processLocalControls();
+    applySafetyAndSyncHardware();
+    delay(100);
     Serial.print(".");
   }
 
@@ -287,7 +354,7 @@ bool connectWifi(bool allowDevelopmentFallback)
     Serial.println("DeviceSecrets Wi-Fi failed.");
   }
 
-  Serial.println("Wi-Fi unavailable. Will retry later. Setup hotspot starts only after GPIO7 Wi-Fi reset.");
+  Serial.println("Wi-Fi unavailable. Will retry later. Setup hotspot starts only after GPIO33 Wi-Fi reset.");
   return false;
 }
 
@@ -472,7 +539,7 @@ String buildStatePayload(const char *source)
   doc["device_uuid"] = DEVICE_UUID;
   doc["device_type"] = "smart_fountain";
   doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["operation_state"] = "running";
+  doc["operation_state"] = readings.waterLow ? "water_low_lockout" : "running";
 
   JsonObject outputJson = doc["outputs"].to<JsonObject>();
 
@@ -551,6 +618,37 @@ bool postState(const char *source = "device_state")
   registerApiSuccess("state");
   Serial.println("State synced.");
   return true;
+}
+
+bool syncLocalStateIfDue(unsigned long now)
+{
+  if (!localStateSyncPending)
+  {
+    return false;
+  }
+
+  if (!isWifiConnected())
+  {
+    return false;
+  }
+
+  if (localStateSyncRetryAt != 0 && now - localStateSyncRetryAt < LOCAL_STATE_SYNC_RETRY_MS)
+  {
+    return false;
+  }
+
+  Serial.println("Syncing local button output change to Laravel...");
+
+  if (postState("local_button"))
+  {
+    localStateSyncPending = false;
+    localStateSyncRetryAt = 0;
+    lastStateSyncAt = now;
+    return true;
+  }
+
+  localStateSyncRetryAt = now;
+  return false;
 }
 
 bool ackCommand(int commandId, const char *status, const char *message = nullptr)
@@ -784,6 +882,7 @@ void setup()
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
+  localControls.begin();
   updateWaterReadings();
   forceAllOutputsOff("safe boot hardware default");
   markOutputStateUntrusted("safe boot OFF is hardware-only until cached or fresh config loads");
@@ -816,12 +915,15 @@ void setup()
     lastCommandPollAt = now;
   }
 
+  Serial.println("Local controls and water safety are active during runtime.");
   logCloudModeIfChanged();
 }
 
 void loop()
 {
   unsigned long now = millis();
+
+  processLocalControls();
 
   if (isSetupPortalActive())
   {
@@ -843,6 +945,13 @@ void loop()
       lastWifiRetryAt = now;
     }
 
+    delay(20);
+    return;
+  }
+
+  if (syncLocalStateIfDue(now))
+  {
+    logCloudModeIfChanged();
     delay(20);
     return;
   }
