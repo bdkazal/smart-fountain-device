@@ -7,6 +7,7 @@
 // - Normal switch / float switch connected to GPIO and GND for water safety
 // - COB controlled as ON/OFF through a MOSFET/driver signal
 // - 12 LED WS2812B / NeoPixel ring or strip controlled through one data pin
+// - Local pump/COB buttons connected to GPIO and GND
 //
 // IMPORTANT:
 // - ESP32 GPIO pins must never receive 12V or 5V.
@@ -14,6 +15,7 @@
 // - ESP32 GND, power-supply GND, MOSFET GND, buck GND, and NeoPixel GND must be common.
 // - Keep the pump in water before ON testing.
 // - Do not connect LEDs directly to ESP32 GPIO except the NeoPixel data input.
+// - Local buttons connect GPIO to GND only; never connect 5V/12V to button GPIO pins.
 // - Avoid ESP32 flash pins GPIO6-GPIO11 and boot strapping pins for safety inputs.
 
 #define SMART_FOUNTAIN_HARDWARE_ENABLED 1
@@ -45,6 +47,16 @@
 #define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
+
+// Local physical control buttons.
+// Wiring:
+// GPIO18 -> pump button -> GND
+// GPIO19 -> COB button  -> GND
+// Internal pull-up keeps each pin HIGH when the button is not pressed.
+#define LOCAL_PUMP_BUTTON_PIN 18
+#define LOCAL_COB_BUTTON_PIN 19
+#define LOCAL_BUTTONS_ACTIVE_LOW 1
+#define LOCAL_BUTTON_DEBOUNCE_MS 50
 
 // COB output through a MOSFET/driver signal.
 // Wiring: GPIO26 -> COB MOSFET signal/input.
