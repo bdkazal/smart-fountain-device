@@ -29,31 +29,28 @@
 // - save compact config if changed
 // - keep checking periodically
 //
-// Offline / server unavailable:
+// Server unavailable:
+// - keep Wi-Fi connected
 // - keep the last trusted saved/current output state
-// - local buttons and water safety continue to work
-// - do not apply daily timeline ranges or scene presets automatically
-// - do not change outputs only because Laravel disappeared
+// - local buttons, water safety, and NeoPixel rendering continue to work
+// - do not poll/post aggressively while the Laravel host is down
+// - probe Laravel quietly every SERVER_OFFLINE_PROBE_INTERVAL_MS
 //
 // Reboot while offline:
 // - load saved compact config from flash
 // - restore that saved output state
 // - keep that state until Laravel becomes reachable again
-//
-// GPIO33 setup reset is the only exception: setup mode clears Wi-Fi/cache and
-// forces outputs OFF for safety.
 
 const unsigned long CONFIG_FETCH_INTERVAL_MS = 120000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 10000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
-const unsigned long HTTP_TIMEOUT_MS = 5000;
-const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
+const unsigned long SERVER_OFFLINE_PROBE_INTERVAL_MS = 30000;
+const unsigned long HTTP_TIMEOUT_MS = 1500;
+const unsigned long COMMAND_HTTP_TIMEOUT_MS = 1500;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
-const int MAX_CONSECUTIVE_API_FAILURES = 3;
 
 enum CloudControlMode
 {
@@ -66,9 +63,9 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
-unsigned long lastNetworkRecoveryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
 unsigned long localStateSyncRetryAt = 0;
+unsigned long lastServerProbeAt = 0;
 
 int consecutiveApiFailures = 0;
 bool serverReachableRecently = false;
@@ -96,16 +93,23 @@ bool processLocalControls();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
-void recoverNetworkIfNeeded(const char *reason);
+bool fetchConfig();
+bool postState(const char *source = "device_state");
+bool pollCommands();
 
 bool isWifiConnected()
 {
   return WiFi.status() == WL_CONNECTED;
 }
 
+bool isServerOnline()
+{
+  return isWifiConnected() && serverReachableRecently;
+}
+
 bool isOfflineControlMode()
 {
-  return !isWifiConnected() || !serverReachableRecently;
+  return !isServerOnline();
 }
 
 void syncHardwareOutputs()
@@ -171,7 +175,6 @@ bool processLocalControls()
   if (localControls.consumePumpToggleRequest())
   {
     updateWaterReadings();
-
     bool requestedEnabled = !outputs.pumpEnabled;
 
     if (requestedEnabled && readings.waterLow)
@@ -358,38 +361,6 @@ bool connectWifi(bool allowDevelopmentFallback)
   return false;
 }
 
-void recoverNetworkIfNeeded(const char *reason)
-{
-  if (consecutiveApiFailures < MAX_CONSECUTIVE_API_FAILURES)
-  {
-    return;
-  }
-
-  unsigned long now = millis();
-
-  if (now - lastNetworkRecoveryAt < WIFI_RECOVERY_COOLDOWN_MS)
-  {
-    return;
-  }
-
-  lastNetworkRecoveryAt = now;
-
-  Serial.println();
-  Serial.print("API failure recovery: restarting Wi-Fi after repeated failures. reason=");
-  Serial.println(reason);
-
-  WiFi.disconnect(true);
-  delay(150);
-  WiFi.mode(WIFI_OFF);
-  delay(300);
-
-  consecutiveApiFailures = 0;
-  serverReachableRecently = false;
-  lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
-
-  connectWifi(true);
-}
-
 void registerApiSuccess(const char *requestName)
 {
   if (consecutiveApiFailures > 0)
@@ -402,12 +373,14 @@ void registerApiSuccess(const char *requestName)
 
   consecutiveApiFailures = 0;
   serverReachableRecently = true;
+  lastServerProbeAt = millis();
 }
 
 void registerApiFailure(const char *requestName, int statusCode)
 {
   consecutiveApiFailures++;
   serverReachableRecently = false;
+  lastServerProbeAt = millis();
 
   Serial.print("API failure #");
   Serial.print(consecutiveApiFailures);
@@ -415,8 +388,7 @@ void registerApiFailure(const char *requestName, int statusCode)
   Serial.print(requestName);
   Serial.print(" status=");
   Serial.println(statusCode);
-
-  recoverNetworkIfNeeded(requestName);
+  Serial.println("Laravel unavailable. Keeping Wi-Fi connected and entering quiet server-offline mode.");
 }
 
 bool getWithRetry(const String &url, String &response, int &statusCode)
@@ -570,11 +542,11 @@ String buildStatePayload(const char *source)
   return payload;
 }
 
-bool postState(const char *source = "device_state")
+bool postState(const char *source)
 {
-  if (!isWifiConnected())
+  if (!isServerOnline())
   {
-    Serial.println("State sync skipped: Wi-Fi offline.");
+    Serial.println("State sync skipped: Laravel offline.");
     return false;
   }
 
@@ -622,12 +594,7 @@ bool postState(const char *source = "device_state")
 
 bool syncLocalStateIfDue(unsigned long now)
 {
-  if (!localStateSyncPending)
-  {
-    return false;
-  }
-
-  if (!isWifiConnected())
+  if (!localStateSyncPending || !isServerOnline())
   {
     return false;
   }
@@ -653,9 +620,9 @@ bool syncLocalStateIfDue(unsigned long now)
 
 bool ackCommand(int commandId, const char *status, const char *message = nullptr)
 {
-  if (!isWifiConnected())
+  if (!isServerOnline())
   {
-    Serial.println("Command ACK skipped: Wi-Fi offline.");
+    Serial.println("Command ACK skipped: Laravel offline.");
     return false;
   }
 
@@ -800,9 +767,9 @@ void processCommand(JsonObject command)
 
 bool pollCommands()
 {
-  if (!isWifiConnected())
+  if (!isServerOnline())
   {
-    Serial.println("Command poll skipped: Wi-Fi offline.");
+    Serial.println("Command poll skipped: Laravel offline.");
     return false;
   }
 
@@ -905,9 +872,17 @@ void setup()
 
   if (isWifiConnected())
   {
-    fetchConfig();
-    postState("boot");
-    pollCommands();
+    bool configFetched = fetchConfig();
+
+    if (configFetched)
+    {
+      postState("boot");
+      pollCommands();
+    }
+    else
+    {
+      Serial.println("Startup API unavailable. Keeping cached state and skipping boot state/command requests.");
+    }
 
     unsigned long now = millis();
     lastConfigFetchAt = now;
@@ -949,6 +924,19 @@ void loop()
     return;
   }
 
+  if (!serverReachableRecently)
+  {
+    if (lastServerProbeAt == 0 || now - lastServerProbeAt >= SERVER_OFFLINE_PROBE_INTERVAL_MS)
+    {
+      Serial.println("Probing Laravel after quiet server-offline interval...");
+      fetchConfig();
+      logCloudModeIfChanged();
+    }
+
+    delay(20);
+    return;
+  }
+
   if (syncLocalStateIfDue(now))
   {
     logCloudModeIfChanged();
@@ -962,6 +950,12 @@ void loop()
     logCloudModeIfChanged();
     lastCommandPollAt = now;
 
+    if (!serverReachableRecently)
+    {
+      delay(20);
+      return;
+    }
+
     if (commandProcessed)
     {
       delay(20);
@@ -974,6 +968,12 @@ void loop()
     postState("device_state");
     logCloudModeIfChanged();
     lastStateSyncAt = now;
+
+    if (!serverReachableRecently)
+    {
+      delay(20);
+      return;
+    }
   }
 
   if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
