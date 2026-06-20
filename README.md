@@ -1,89 +1,81 @@
 # Biztola Smart Fountain Device Firmware
 
-ESP32-C3 firmware for the **Biztola Smart Fountain** product.
+ESP32 firmware for the **Biztola Smart Fountain** product.
 
-This device is part of the shared Biztola IoT Platform. It is not designed as a one-off fountain-only sketch. The firmware is being shaped into reusable platform-style modules plus a Smart Fountain product module.
-
-Backend repository:
+This repository contains the device-side runtime for the Smart Fountain. The backend lives in:
 
 ```text
 bdkazal/biztola-iot-platform
 ```
 
-Firmware repository:
+The Smart Fountain is a **persistent state device**. Outputs stay in their last applied state until another command, schedule, local button, safety rule, or recovery flow changes them.
+
+## Documentation
+
+Full documentation is kept in [`docs/`](docs/).
+
+| File | Purpose |
+| --- | --- |
+| [`docs/SMART_FOUNTAIN_DEVICE.md`](docs/SMART_FOUNTAIN_DEVICE.md) | Full device/product overview and current firmware status. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Firmware module architecture and responsibility boundaries. |
+| [`docs/SETUP_AND_FLASHING.md`](docs/SETUP_AND_FLASHING.md) | Setup, secrets, build, upload, and monitor workflow. |
+| [`docs/HARDWARE_PINS.md`](docs/HARDWARE_PINS.md) | GPIO pin map and hardware assumptions. |
+| [`docs/API_AND_STATE_FLOW.md`](docs/API_AND_STATE_FLOW.md) | Laravel config, commands, ACK, state sync, and payload rules. |
+| [`docs/OFFLINE_RECOVERY_AND_SAFETY.md`](docs/OFFLINE_RECOVERY_AND_SAFETY.md) | Offline mode, local controls, recovery sync, config cache, and water safety. |
+| [`docs/DAILY_TIMELINE_OPERATION.md`](docs/DAILY_TIMELINE_OPERATION.md) | Online Laravel schedule vs offline cached timeline behavior. |
+| [`docs/DAILY_TIMELINE_TESTING.md`](docs/DAILY_TIMELINE_TESTING.md) | Real-device schedule/timeline test guide. |
+| [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | Firmware smoke-test checklist. |
+
+Note: the Laravel repository uses uppercase `Docs/`. This firmware repository uses lowercase `docs/`.
+
+## Current stable status
+
+The firmware is stable after the runtime refactor chain through PR #9.
+
+Verified on real ESP32 hardware:
 
 ```text
-bdkazal/smart-fountain-device
+[x] PlatformIO ESP32 project builds
+[x] Wi-Fi stored credentials boot path works
+[x] GET /api/device/config works
+[x] server_time_utc sync works
+[x] DS3231/HW-111 RTC sync/update path works
+[x] compact config cache loads before Wi-Fi/API
+[x] compact config cache saves only when changed
+[x] config outputs parse into firmware state
+[x] daily_timeline ranges parse into firmware state
+[x] POST /api/device/state works
+[x] GET /api/device/commands works
+[x] ACK acknowledged/executed works
+[x] output_set commands work
+[x] scene_apply command handling exists
+[x] local pump button works
+[x] local COB button works
+[x] local button changes sync to Laravel
+[x] API offline mode works
+[x] local controls work while API is offline
+[x] API recovery probe works
+[x] final queued local state syncs after Laravel recovers
 ```
 
-## Current firmware status
-
-Core API and state flow:
+Focused behavior still needing real-device verification:
 
 ```text
-[x] PlatformIO ESP32-C3 project
-[x] Wi-Fi connection and retry
-[x] GET /api/device/config
-[x] parse server_time_utc
-[x] parse Smart Fountain config.outputs
-[x] parse daily_timeline ranges into RAM structs
-[x] POST /api/device/state
-[x] GET /api/device/commands
-[x] ACK command as acknowledged
-[x] ACK command as executed/failed
-[x] handle output_set in local state
-[x] handle scene_apply in local state
-[x] report actual hardware/output state as final truth
+[ ] Laravel online daily timeline creates scene_apply at range start time
+[ ] ESP32 applies scheduled scene_apply command and syncs actual state
+[ ] ESP32 offline cached timeline applies range outputs at real boundary time
+[ ] water-low safety still protects pump during scheduled/offline timeline apply
 ```
 
-Safety, cache, and offline behavior:
+## Quick setup
 
-```text
-[x] local water_low pump safety
-[x] pump ON ignored when water_low=true
-[x] COB/RGB allowed when water_low=true
-[x] compact config cache in ESP32 Preferences/NVS
-[x] cache loads before Wi-Fi/API fetch
-[x] cache avoids unnecessary flash writes when unchanged
-[x] cached daily_timeline ranges include output states
-[x] DeviceClock parses server_time_utc and local timezone offset
-[x] OfflineTimeline detects active daily range
-[x] OfflineTimeline applies cached range outputs when API/cloud is unavailable
-[x] cloud mode logging: ONLINE / OFFLINE
-[x] offline API retry backoff to reduce socket-error spam
-[x] recovery: actual locally-applied state syncs after Laravel returns
-```
-
-Hardware still pending:
-
-```text
-[ ] real pump output pin / MOSFET module integration
-[ ] COB PWM pin / dimming integration
-[ ] RGB light hardware type and pin integration
-[ ] real water-level sensor pin/calibration
-[ ] optional RTC module
-[ ] optional display
-```
-
-Next firmware modules:
-
-```text
-[x] DeviceClock: server UTC + timezone offset + millis-based clock
-[x] OfflineTimeline: use cached timeline to apply outputs without Laravel
-[ ] HardwareOutputs: real pump / COB / RGB drivers
-[ ] WaterLevelSensor: ADC calibration and filtering
-[ ] API extraction: state reporter, command client, command processor
-```
-
-## Local setup
-
-Copy the example secrets file:
+Copy secrets:
 
 ```bash
 cp include/DeviceSecrets.example.h include/DeviceSecrets.h
 ```
 
-Edit `include/DeviceSecrets.h` with your local values:
+Edit `include/DeviceSecrets.h`:
 
 ```cpp
 #define WIFI_SSID "YOUR_WIFI_NAME"
@@ -93,9 +85,9 @@ Edit `include/DeviceSecrets.h` with your local values:
 #define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_API_KEY"
 ```
 
-Important: do **not** use `127.0.0.1` for `API_BASE_URL` from ESP32. Use the Mac/Laravel server LAN IP.
+Do **not** use `127.0.0.1` for `API_BASE_URL` from ESP32. Use the Mac/Laravel server LAN IP.
 
-Run Laravel backend like this:
+Run Laravel on the LAN:
 
 ```bash
 php artisan serve --host=0.0.0.0 --port=8000
@@ -103,218 +95,71 @@ php artisan serve --host=0.0.0.0 --port=8000
 
 ## Build, upload, monitor
 
-From this repository:
-
 ```bash
 pio run
-pio run --target upload
-pio device monitor
+pio run -t upload
+pio device monitor -b 115200
 ```
 
-The serial monitor speed is configured in `platformio.ini`.
+The monitor speed is also configured in `platformio.ini`.
 
-## Expected boot behavior
-
-Normal online boot should show:
+## Expected normal boot
 
 ```text
 Biztola Smart Fountain ESP32 starting...
+Device storage initialized.
+All outputs forced OFF: safe boot hardware default
+Output state untrusted: safe boot OFF is hardware-only until cached or fresh config loads
 Loading cached Laravel config from flash. bytes=...
 Cached Laravel config loaded.
-Wi-Fi connected
+Trying stored Wi-Fi credentials...
+Wi-Fi connected. IP: ...
 GET /api/device/config
 Config HTTP status: 200
 server_time_utc: ...
-device_type: smart_fountain
-DeviceClock synced. Local time: ...
-Daily timeline repeat: daily
-Compact config cache JSON length: ...
-Config cache unchanged. Flash write skipped.
+DeviceClock synced from Laravel UTC.
+Daily timeline enabled: yes
+Timeline range count: 3
 POST /api/device/state
-GET /api/device/commands
-Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
-```
-
-First boot after empty cache should show:
-
-```text
-No cached Laravel config found.
-GET /api/device/config
-Compact config cache JSON length: ...
-Config cache saved to flash. bytes=...
-```
-
-## Online / offline behavior
-
-When Laravel/API is reachable, dashboard/API control remains primary:
-
-```text
-Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
-OfflineTimeline active range: day scene: Day Fountain local_time=15:31 range=360->1050
-```
-
-In online mode, OfflineTimeline only detects the active range. It does **not** apply cached outputs while Laravel is healthy.
-
-When Laravel/API becomes unavailable but Wi-Fi is still connected:
-
-```text
-Cloud mode: OFFLINE - API unavailable, cached local schedule may run.
-OfflineTimeline applying cached range: day scene: Day Fountain
-Pump state applied from offline_timeline: enabled=true speed=60
-COB state applied from offline_timeline: enabled=true brightness=40
-RGB state applied from offline_timeline: enabled=true brightness=35 color=#FFB066 effect=warm_glow
-OfflineTimeline applied cached outputs locally. State will sync when Laravel is reachable.
-```
-
-When Laravel/API recovers, the firmware syncs the actual locally-applied state back to Laravel:
-
-```text
 State HTTP status: 200
 State synced.
 Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
 ```
 
-Verified recovery state example:
+## Core behavior summary
+
+### Online mode
+
+Laravel is reachable and controls live dashboard/API behavior.
 
 ```text
-pump=true speed=60
-cob_light=true brightness=40
-rgb_light=true brightness=35 color=#FFB066 effect=warm_glow
+Dashboard command -> Laravel pending command -> ESP32 poll -> ACK acknowledged -> apply locally -> ACK executed -> POST actual state
 ```
 
-## API retry intervals
+### Offline/API-unavailable mode
 
-Online mode:
+Firmware keeps local control and safety active.
 
 ```text
-state sync: 5 seconds
-command poll: 5 seconds
-config fetch: 60 seconds
+API failures -> server-offline mode -> local buttons still work -> local state queued -> recovery probe -> final actual state syncs to Laravel
 ```
 
-Offline/API-unavailable mode:
+### Daily timeline
+
+There are two separate timeline paths:
 
 ```text
-state retry: 30 seconds
-command retry: 30 seconds
-config retry: 30 seconds
-offline timeline check: 30 seconds
-local water safety: always active
+Online schedule: Laravel creates scene_apply command.
+Offline fallback: ESP32 applies cached daily_timeline range locally.
 ```
 
-This keeps development responsive while online, but reduces repeated socket-error logs while Laravel/API is unavailable.
-
-## Safety rule
-
-The pump must be protected locally.
-
-If `water_low=true`:
+See:
 
 ```text
-pump OFF
-speed_percent = 0
-pump ON commands ignored locally
-lights may still work
+docs/DAILY_TIMELINE_OPERATION.md
+docs/DAILY_TIMELINE_TESTING.md
 ```
 
-This rule must remain inside firmware, not only Laravel. The fountain should protect the pump even when Wi-Fi, internet, router, or Laravel is unavailable.
+## Do not work on MQTT yet
 
-## Config cache rule
-
-The firmware does **not** cache the full Laravel `/api/device/config` response.
-
-Reason:
-
-```text
-The full config can be too large for ESP32 Preferences/NVS.
-server_time_utc changes every request.
-Dashboard-only metadata is not needed offline.
-```
-
-Instead, firmware stores a compact cache containing only what it needs:
-
-```text
-cache_version
-device_type
-timezone_offset_minutes
-outputs:
-  pump
-  cob_light
-  rgb_light
-daily_timeline:
-  enabled
-  repeat
-  ranges with scene output states
-```
-
-Latest verified cache size during development:
-
-```text
-Compact config cache JSON length: 1228
-```
-
-## Offline timeline behavior
-
-The current Laravel config response includes output states inside each daily timeline range. Serial output confirms:
-
-```text
-- day 360 -> 1050 scene: Day Fountain outputs: yes
-- evening 1050 -> 1380 scene: Night Glow outputs: yes
-- night 1380 -> 360 scene: All Off outputs: yes
-```
-
-The `night` range crosses midnight, so firmware treats it as:
-
-```text
-active when local_time >= 23:00 OR local_time < 06:00
-```
-
-OfflineTimeline only applies cached outputs when cloud/API is unavailable. This avoids fighting dashboard commands while Laravel is online.
-
-## Main firmware modules
-
-```text
-src/main.cpp
-  Boot/runtime loop, Wi-Fi, high-level API flow, state sync, command polling, cloud-mode gating.
-
-include/ApiClient.h
-src/ApiClient.cpp
-  Laravel base URL normalization and common device API headers.
-
-include/DeviceClock.h
-src/DeviceClock.cpp
-  Parses server_time_utc, applies timezone offset, exposes local HH:MM/minutes.
-
-include/FountainConfig.h
-src/FountainConfig.cpp
-  Config parsing, compact cache building, daily timeline loading into RAM structs.
-
-include/ConfigCache.h
-src/ConfigCache.cpp
-  ESP32 Preferences/NVS storage for compact firmware config.
-
-include/OfflineTimeline.h
-src/OfflineTimeline.cpp
-  Detects active daily timeline range and applies cached range outputs while offline.
-
-include/FountainOutputs.h
-src/FountainOutputs.cpp
-  Pump, COB, RGB state application and local water-low pump safety.
-
-include/WaterLevelSensor.h
-src/WaterLevelSensor.cpp
-  Simulated water-level readings for now; later real ADC sensor logic.
-
-include/FountainTypes.h
-  Shared output/readings/timeline structs.
-```
-
-## Current limitations
-
-```text
-- Output state is software-only until hardware pins are wired.
-- Water sensor is simulated until ADC hardware is connected.
-- Offline schedule depends on last successful server_time_utc sync.
-- No RTC fallback yet.
-- API code is still mostly in main.cpp and should later be extracted.
-```
+MQTT is future work. Current priority is verifying Smart Fountain daily timeline/schedule operation first.
