@@ -8,24 +8,16 @@ This document explains how the Smart Fountain firmware communicates with Laravel
 bdkazal/biztola-iot-platform
 ```
 
-## Authentication
+## Authority split
 
-Every firmware request must include:
-
-```http
-X-DEVICE-KEY: <device_api_key>
-Accept: application/json
-Content-Type: application/json
+```text
+Laravel = configuration owner, dashboard/API owner, audit/state recorder
+ESP32   = hardware executor, daily timeline executor, local safety authority
 ```
 
-The device identifies itself using:
+Laravel provides config and manual/dashboard commands.
 
-```json
-{
-  "device_uuid": "...",
-  "device_type": "smart_fountain"
-}
-```
+Firmware applies safe hardware state, evaluates the daily timeline, and reports actual state back.
 
 ## Main endpoints
 
@@ -45,7 +37,7 @@ For Smart Fountain, `/api/device/state` is the important endpoint because it rep
 GET /api/device/config?device_uuid=<uuid>
 ```
 
-Laravel returns:
+Laravel returns the firmware-facing config:
 
 ```text
 server_time_utc
@@ -65,7 +57,6 @@ Firmware uses config to:
 
 ```text
 sync DeviceClock from server_time_utc
-update RTC when needed
 load latest server-known outputs
 load scenes
 load daily timeline ranges
@@ -81,19 +72,40 @@ timezone_offset_minutes = local schedule interpretation
 RTC stores UTC, not local time
 ```
 
+## Daily timeline flow
+
+Daily timeline execution is primarily firmware-side.
+
+Online flow:
+
+```text
+ESP32 fetches config
+ESP32 syncs time
+ESP32 caches daily_timeline
+ESP32 determines active local range
+ESP32 applies active range once if needed
+ESP32 POSTs actual state
+```
+
+Offline flow:
+
+```text
+cached daily_timeline exists
+DeviceClock has valid time
+Laravel/API becomes unavailable
+ESP32 determines active local range from cache
+ESP32 applies active range once if needed
+ESP32 queues state sync
+Laravel/API recovers
+ESP32 POSTs final actual state
+```
+
+The Laravel schedule command may still create `scene_apply` commands during compatibility/backstop testing, but normal production timeline execution should come from local evaluation of cached `daily_timeline` config.
+
 ## Command polling
 
 ```http
 GET /api/device/commands?device_uuid=<uuid>
-```
-
-No pending command response:
-
-```json
-{
-  "message": "No pending commands.",
-  "command": null
-}
 ```
 
 Supported command types:
@@ -103,6 +115,8 @@ output_set
 scene_apply
 ```
 
+Commands are mainly for dashboard/manual actions and compatibility/backstop schedule testing.
+
 ## Command lifecycle
 
 When command exists:
@@ -110,7 +124,7 @@ When command exists:
 ```text
 1. ESP32 receives command.
 2. ESP32 ACKs acknowledged.
-3. ESP32 applies command locally.
+3. ESP32 applies command locally if safe.
 4. ESP32 ACKs executed or failed.
 5. ESP32 POSTs actual state.
 ```
@@ -123,103 +137,22 @@ executed = requested state was applied
 
 It does not mean the output finished running.
 
-## output_set
+## scene_apply compatibility
 
-Example:
+Schedule-created scene commands may still exist during migration/backstop testing.
 
-```json
-{
-  "command_type": "output_set",
-  "payload": {
-    "output": "rgb_light",
-    "state": {
-      "enabled": true,
-      "brightness_percent": 25,
-      "color": "#CD0404",
-      "effect": "slow_rainbow"
-    },
-    "source": "dashboard"
-  }
-}
+They use `scene_apply`, with extra metadata such as:
+
+```text
+source = schedule:<range_id>:<period>
+schedule_range_id
+schedule_name
+schedule_period
+schedule_phase = start
+repeat = daily
 ```
 
-## scene_apply
-
-Example:
-
-```json
-{
-  "command_type": "scene_apply",
-  "payload": {
-    "scene_id": 1,
-    "scene_name": "Day Fountain",
-    "source": "scene:1",
-    "outputs": {
-      "pump": {
-        "enabled": true,
-        "speed_percent": 100
-      },
-      "cob_light": {
-        "enabled": true,
-        "brightness_percent": 100
-      },
-      "rgb_light": {
-        "enabled": true,
-        "brightness_percent": 25,
-        "color": "#CD0404",
-        "effect": "slow_rainbow"
-      }
-    }
-  }
-}
-```
-
-Schedule-created scene commands also use `scene_apply`, with extra metadata:
-
-```json
-{
-  "source": "schedule:5:evening",
-  "schedule_range_id": 5,
-  "schedule_name": "Evening",
-  "schedule_period": "evening",
-  "schedule_phase": "start",
-  "repeat": "daily"
-}
-```
-
-## ACK endpoint
-
-```http
-POST /api/device/commands/{command}/ack
-```
-
-ACK acknowledged:
-
-```json
-{
-  "device_uuid": "...",
-  "status": "acknowledged"
-}
-```
-
-ACK executed:
-
-```json
-{
-  "device_uuid": "...",
-  "status": "executed"
-}
-```
-
-ACK failed:
-
-```json
-{
-  "device_uuid": "...",
-  "status": "failed",
-  "message": "Command could not be applied safely."
-}
-```
+Firmware should support them, but the daily recurring timeline should not depend on them.
 
 ## State sync
 
@@ -229,52 +162,19 @@ POST /api/device/state
 
 State sync reports actual firmware/hardware truth.
 
-Typical payload:
-
-```json
-{
-  "device_uuid": "...",
-  "device_type": "smart_fountain",
-  "firmware_version": "smart-fountain-dev-0.1",
-  "operation_state": "running",
-  "outputs": {
-    "pump": {
-      "enabled": true,
-      "source": "device_state"
-    },
-    "cob_light": {
-      "enabled": false,
-      "source": "device_state"
-    },
-    "rgb_light": {
-      "enabled": true,
-      "brightness_percent": 25,
-      "color": "#CD0404",
-      "effect": "slow_rainbow",
-      "source": "device_state"
-    }
-  },
-  "readings": {
-    "water_low": {
-      "value": 0,
-      "unit": "boolean"
-    }
-  }
-}
-```
-
-## Source values
-
-Common output source values:
+Typical output sources:
 
 ```text
 boot
 device_state
 local_button
 dashboard
+device_timeline
 offline_timeline
 water_safety
 ```
+
+`device_timeline` is recommended for normal firmware-side timeline application. Existing code may still use `offline_timeline` for cached/offline application until source naming is refactored.
 
 ## Trust rule
 
@@ -289,28 +189,16 @@ cached config loaded
 fresh Laravel config fetched
 cloud command applied
 local button changed actual hardware state
+firmware timeline applied cached range
 offline timeline applied cached range
 ```
 
-## Failure handling
-
-Failures are classified by `CloudRuntime` and tracked by `ApiHealth`.
-
-Repeated failures for these requests can enter API offline mode:
-
-```text
-commands
-state
-config
-```
-
-Parse warnings and less critical warnings are recorded without immediately forcing offline mode.
-
 ## Final rule
 
-Laravel may request state, but the firmware reports actual state.
+Laravel may request or configure state, but firmware reports actual state.
 
 ```text
+Config payload = configured timeline/scenes
 Command payload = request
 ACK executed = request applied
 POST /api/device/state = actual hardware truth
