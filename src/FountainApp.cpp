@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 
 #include "ApiClient.h"
+#include "ApiHealth.h"
 #include "ConfigCache.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
@@ -48,13 +49,13 @@ const unsigned long CONFIG_FETCH_INTERVAL_MS = 120000;
 const unsigned long STATE_SYNC_INTERVAL_MS = 10000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
-const unsigned long WIFI_RECOVERY_COOLDOWN_MS = 30000;
 const unsigned long HTTP_TIMEOUT_MS = 5000;
 const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
+const unsigned long API_PROBE_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
-const int MAX_CONSECUTIVE_API_FAILURES = 3;
+const int API_OFFLINE_FAILURE_THRESHOLD = 3;
 
 enum CloudControlMode
 {
@@ -67,12 +68,10 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
-unsigned long lastNetworkRecoveryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
 unsigned long localStateSyncRetryAt = 0;
 
-int consecutiveApiFailures = 0;
-bool serverReachableRecently = false;
+ApiHealth apiHealth;
 bool outputStateTrusted = false;
 bool localStateSyncPending = false;
 String serverTimeUtc = "";
@@ -97,7 +96,7 @@ bool processLocalControls();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
-void recoverNetworkIfNeeded(const char *reason);
+bool shouldCountApiFailureForOffline(const char *requestName);
 
 bool isWifiConnected()
 {
@@ -106,7 +105,7 @@ bool isWifiConnected()
 
 bool isOfflineControlMode()
 {
-  return !isWifiConnected() || !serverReachableRecently;
+  return !isWifiConnected() || apiHealth.isServerOffline();
 }
 
 void syncHardwareOutputs()
@@ -359,65 +358,26 @@ bool connectWifi(bool allowDevelopmentFallback)
   return false;
 }
 
-void recoverNetworkIfNeeded(const char *reason)
+bool shouldCountApiFailureForOffline(const char *requestName)
 {
-  if (consecutiveApiFailures < MAX_CONSECUTIVE_API_FAILURES)
-  {
-    return;
-  }
-
-  unsigned long now = millis();
-
-  if (now - lastNetworkRecoveryAt < WIFI_RECOVERY_COOLDOWN_MS)
-  {
-    return;
-  }
-
-  lastNetworkRecoveryAt = now;
-
-  Serial.println();
-  Serial.print("API failure recovery: restarting Wi-Fi after repeated failures. reason=");
-  Serial.println(reason);
-
-  WiFi.disconnect(true);
-  delay(150);
-  WiFi.mode(WIFI_OFF);
-  delay(300);
-
-  consecutiveApiFailures = 0;
-  serverReachableRecently = false;
-  lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
-
-  connectWifi(true);
+  String request = requestName;
+  return request == "commands" || request == "state" || request == "config";
 }
 
 void registerApiSuccess(const char *requestName)
 {
-  if (consecutiveApiFailures > 0)
-  {
-    Serial.print("API recovered after ");
-    Serial.print(consecutiveApiFailures);
-    Serial.print(" failure(s). request=");
-    Serial.println(requestName);
-  }
-
-  consecutiveApiFailures = 0;
-  serverReachableRecently = true;
+  apiHealth.registerSuccess(requestName);
 }
 
 void registerApiFailure(const char *requestName, int statusCode)
 {
-  consecutiveApiFailures++;
-  serverReachableRecently = false;
+  if (shouldCountApiFailureForOffline(requestName))
+  {
+    apiHealth.registerFailure(requestName, statusCode);
+    return;
+  }
 
-  Serial.print("API failure #");
-  Serial.print(consecutiveApiFailures);
-  Serial.print(" request=");
-  Serial.print(requestName);
-  Serial.print(" status=");
-  Serial.println(statusCode);
-
-  recoverNetworkIfNeeded(requestName);
+  apiHealth.registerWarning(requestName, statusCode);
 }
 
 bool getWithRetry(const String &url, String &response, int &statusCode)
@@ -579,6 +539,12 @@ bool postState(const char *source = "device_state")
     return false;
   }
 
+  if (apiHealth.isServerOffline())
+  {
+    Serial.println("State sync skipped: API offline mode.");
+    return false;
+  }
+
   if (!outputStateTrusted)
   {
     Serial.println("State sync skipped: output state is not trusted yet. Safe boot OFF will not be pushed to Laravel.");
@@ -629,6 +595,11 @@ bool syncLocalStateIfDue(unsigned long now)
   }
 
   if (!isWifiConnected())
+  {
+    return false;
+  }
+
+  if (apiHealth.isServerOffline())
   {
     return false;
   }
@@ -807,6 +778,11 @@ bool pollCommands()
     return false;
   }
 
+  if (apiHealth.isServerOffline())
+  {
+    return false;
+  }
+
   String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
 
   HTTPClient http;
@@ -880,6 +856,7 @@ void FountainApp::begin()
 
   beginConfigCache();
   beginDeviceStorage();
+  apiHealth.begin(API_OFFLINE_FAILURE_THRESHOLD, API_PROBE_INTERVAL_MS);
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
@@ -946,6 +923,26 @@ void FountainApp::update()
       lastWifiRetryAt = now;
     }
 
+    delay(20);
+    return;
+  }
+
+  if (apiHealth.isServerOffline())
+  {
+    if (apiHealth.shouldProbe(now))
+    {
+      apiHealth.markProbeAttempt(now);
+      Serial.println("API offline mode: probing Laravel...");
+
+      if (fetchConfig())
+      {
+        lastConfigFetchAt = now;
+        logCloudModeIfChanged();
+        syncLocalStateIfDue(now);
+      }
+    }
+
+    logCloudModeIfChanged();
     delay(20);
     return;
   }
