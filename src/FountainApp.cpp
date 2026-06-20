@@ -17,6 +17,7 @@
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
 #include "LocalControls.h"
+#include "LocalRuntime.h"
 #include "SetupPortal.h"
 #include "StateSyncRuntime.h"
 #include "WaterLevelSensor.h"
@@ -95,6 +96,7 @@ WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 LocalControls localControls;
+LocalRuntime localRuntime;
 StateSyncRuntime stateSyncRuntime;
 
 void updateWaterReadings();
@@ -171,44 +173,13 @@ void queueLocalStateSync(const char *reason)
 
 bool processLocalControls()
 {
-  localControls.update();
+  updateWaterReadings();
 
-  bool changed = false;
-
-  if (localControls.consumePumpToggleRequest())
-  {
-    updateWaterReadings();
-
-    bool requestedEnabled = !outputs.pumpEnabled;
-
-    if (requestedEnabled && readings.waterLow)
-    {
-      outputs.pumpEnabled = false;
-      outputs.pumpSpeedPercent = 0;
-      Serial.println("Local pump button ignored because water_low=true.");
-    }
-    else
-    {
-      outputs.pumpEnabled = requestedEnabled;
-      outputs.pumpSpeedPercent = requestedEnabled ? 100 : 0;
-      changed = true;
-
-      Serial.print("Pump state applied from local_button: enabled=");
-      Serial.print(outputs.pumpEnabled ? "true" : "false");
-      Serial.println(" mode=on_off");
-    }
-  }
-
-  if (localControls.consumeCobToggleRequest())
-  {
-    outputs.cobEnabled = !outputs.cobEnabled;
-    outputs.cobBrightnessPercent = outputs.cobEnabled ? 100 : 0;
-    changed = true;
-
-    Serial.print("COB state applied from local_button: enabled=");
-    Serial.print(outputs.cobEnabled ? "true" : "false");
-    Serial.println(" mode=on_off");
-  }
+  bool changed = localRuntime.processControls(
+    localControls,
+    outputs,
+    readings
+  );
 
   if (changed)
   {
