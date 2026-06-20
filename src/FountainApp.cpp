@@ -16,6 +16,7 @@
 #include "HardwareOutputs.h"
 #include "LocalControls.h"
 #include "SetupPortal.h"
+#include "StateSyncRuntime.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
 
@@ -89,6 +90,7 @@ WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 LocalControls localControls;
+StateSyncRuntime stateSyncRuntime;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
@@ -524,44 +526,6 @@ bool fetchConfig()
   return true;
 }
 
-String buildStatePayload(const char *source)
-{
-  JsonDocument doc;
-
-  doc["device_uuid"] = DEVICE_UUID;
-  doc["device_type"] = "smart_fountain";
-  doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["operation_state"] = readings.waterLow ? "water_low_lockout" : "running";
-
-  JsonObject outputJson = doc["outputs"].to<JsonObject>();
-
-  JsonObject pump = outputJson["pump"].to<JsonObject>();
-  pump["enabled"] = outputs.pumpEnabled;
-  pump["source"] = readings.waterLow ? "water_safety" : source;
-
-  JsonObject cob = outputJson["cob_light"].to<JsonObject>();
-  cob["enabled"] = outputs.cobEnabled;
-  cob["source"] = source;
-
-  JsonObject rgb = outputJson["rgb_light"].to<JsonObject>();
-  rgb["enabled"] = outputs.rgbEnabled;
-  rgb["brightness_percent"] = outputs.rgbBrightnessPercent;
-  rgb["color"] = outputs.rgbColor;
-  rgb["effect"] = outputs.rgbEffect;
-  rgb["source"] = source;
-
-  JsonObject readingsJson = doc["readings"].to<JsonObject>();
-
-  JsonObject waterLow = readingsJson["water_low"].to<JsonObject>();
-  waterLow["value"] = readings.waterLow ? 1 : 0;
-  waterLow["unit"] = "boolean";
-
-  String payload;
-  serializeJson(doc, payload);
-
-  return payload;
-}
-
 bool postState(const char *source = "device_state")
 {
   if (!isWifiConnected())
@@ -585,7 +549,7 @@ bool postState(const char *source = "device_state")
   updateWaterReadings();
   enforceWaterSafety();
 
-  String payload = buildStatePayload(source);
+  String payload = stateSyncRuntime.buildStatePayload(source, outputs, readings, FIRMWARE_VERSION);
   String response;
   int statusCode;
 
