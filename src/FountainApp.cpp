@@ -24,6 +24,7 @@
 #include "LocalRuntime.h"
 #include "SetupPortal.h"
 #include "StateSyncRuntime.h"
+#include "StateSyncFlowRuntime.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
 #include "WifiRuntime.h"
@@ -100,6 +101,7 @@ HardwareOutputs hardwareOutputs;
 LocalControls localControls;
 LocalRuntime localRuntime;
 StateSyncRuntime stateSyncRuntime;
+StateSyncFlowRuntime stateSyncFlowRuntime;
 WifiRuntime wifiRuntime;
 
 void updateWaterReadings();
@@ -304,77 +306,54 @@ bool fetchConfig()
 
 bool postState(const char *source = "device_state")
 {
-  if (!isWifiConnected())
-  {
-    Serial.println("State sync skipped: Wi-Fi offline.");
-    return false;
-  }
-
-  if (apiHealth.isServerOffline())
-  {
-    Serial.println("State sync skipped: API offline mode.");
-    return false;
-  }
-
-  if (!outputStateTrusted)
-  {
-    Serial.println("State sync skipped: output state is not trusted yet. Safe boot OFF will not be pushed to Laravel.");
-    return false;
-  }
-
-  updateWaterReadings();
-  enforceWaterSafety();
-
-  String response;
-  int statusCode;
-
-  stateSyncRuntime.postState(
+  return stateSyncFlowRuntime.postState(
+    isWifiConnected(),
+    apiHealth.isServerOffline(),
+    outputStateTrusted,
     httpDeviceApi,
-    source,
+    stateSyncRuntime,
     outputs,
     readings,
     FIRMWARE_VERSION,
-    response,
-    statusCode
+    source,
+    updateWaterReadings,
+    enforceWaterSafety,
+    registerApiSuccess,
+    registerApiFailure
   );
-
-  Serial.print("State HTTP status: ");
-  Serial.println(statusCode);
-
-  if (statusCode < 200 || statusCode >= 300)
-  {
-    Serial.println(response);
-    registerApiFailure("state", statusCode);
-    return false;
-  }
-
-  registerApiSuccess("state");
-  Serial.println("State synced.");
-  return true;
 }
 
 bool postPendingOutputState()
 {
-  return postState(stateSyncRuntime.pendingOutputSource());
+  return stateSyncFlowRuntime.postPendingOutputState(
+    isWifiConnected(),
+    apiHealth.isServerOffline(),
+    outputStateTrusted,
+    httpDeviceApi,
+    stateSyncRuntime,
+    outputs,
+    readings,
+    FIRMWARE_VERSION,
+    updateWaterReadings,
+    enforceWaterSafety,
+    registerApiSuccess,
+    registerApiFailure
+  );
 }
 
 bool syncLocalStateIfDue(unsigned long now)
 {
-  bool synced = stateSyncRuntime.syncLocalStateIfDue(
+  return stateSyncFlowRuntime.syncLocalStateIfDue(
     now,
     LOCAL_STATE_SYNC_RETRY_MS,
     isWifiConnected(),
     apiHealth.isServerOffline(),
-    postPendingOutputState
+    stateSyncRuntime,
+    postPendingOutputState,
+    lastStateSyncAt
   );
-
-  if (synced)
-  {
-    lastStateSyncAt = now;
-  }
-
-  return synced;
 }
+
 
 bool processDailyTimeline()
 {
