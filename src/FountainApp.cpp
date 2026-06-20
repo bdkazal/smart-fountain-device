@@ -256,9 +256,18 @@ void enforceWaterSafety()
 
 bool loadCachedConfigIfAvailable()
 {
-  String cachedConfigJson = loadCachedConfigJson();
+  String cachedConfigJson;
+  bool cacheExists = false;
 
-  if (cachedConfigJson.length() == 0)
+  bool parsed = configRuntime.loadCachedConfig(
+    fountainConfig,
+    outputs,
+    dailyTimeline,
+    cachedConfigJson,
+    cacheExists
+  );
+
+  if (!cacheExists)
   {
     Serial.println("No cached Laravel config found.");
     markOutputStateUntrusted("no cached Laravel config; safe boot OFF must not sync to Laravel");
@@ -268,8 +277,6 @@ bool loadCachedConfigIfAvailable()
   Serial.println();
   Serial.print("Loading cached Laravel config from flash. bytes=");
   Serial.println(cachedConfigJson.length());
-
-  bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs, dailyTimeline);
 
   if (!parsed)
   {

@@ -3,6 +3,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include "HttpDeviceApi.h"
+#include "FountainConfig.h"
+#include "FountainTypes.h"
 
 class ConfigRuntime
 {
@@ -26,5 +28,13 @@ public:
     String &deviceType,
     int &timezoneOffsetMinutes,
     bool &parseOk
+  );
+
+  bool loadCachedConfig(
+    FountainConfig &fountainConfig,
+    FountainOutputState &outputs,
+    FountainDailyTimeline &dailyTimeline,
+    String &cachedConfigJson,
+    bool &cacheExists
   );
 };

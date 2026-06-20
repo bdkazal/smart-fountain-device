@@ -1,4 +1,5 @@
 #include "ConfigRuntime.h"
+#include "ConfigCache.h"
 
 bool ConfigRuntime::parseConfigResponse(
   const String &response,
@@ -66,4 +67,27 @@ bool ConfigRuntime::fetchConfig(
   );
 
   return parseOk;
+}
+
+bool ConfigRuntime::loadCachedConfig(
+  FountainConfig &fountainConfig,
+  FountainOutputState &outputs,
+  FountainDailyTimeline &dailyTimeline,
+  String &cachedConfigJson,
+  bool &cacheExists
+)
+{
+  cachedConfigJson = loadCachedConfigJson();
+  cacheExists = cachedConfigJson.length() > 0;
+
+  if (!cacheExists)
+  {
+    return false;
+  }
+
+  return fountainConfig.loadFromConfigObjectJson(
+    cachedConfigJson,
+    outputs,
+    dailyTimeline
+  );
 }
