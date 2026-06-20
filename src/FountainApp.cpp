@@ -97,6 +97,7 @@ bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
 bool shouldCountApiFailureForOffline(const char *requestName);
+bool probeApiRecovery();
 
 bool isWifiConnected()
 {
@@ -415,6 +416,44 @@ bool getWithRetry(const String &url, String &response, int &statusCode)
   }
 
   return false;
+}
+
+bool probeApiRecovery()
+{
+  if (!isWifiConnected())
+  {
+    Serial.println("API recovery probe skipped: Wi-Fi offline.");
+    return false;
+  }
+
+  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
+  String response;
+  int statusCode;
+
+  if (!getWithRetry(url, response, statusCode))
+  {
+    if (response.length() > 0)
+    {
+      Serial.println(response);
+    }
+
+    registerApiFailure("config", statusCode);
+    return false;
+  }
+
+  JsonDocument doc;
+  DeserializationError error = deserializeJson(doc, response);
+
+  if (error)
+  {
+    Serial.print("API recovery probe JSON parse failed: ");
+    Serial.println(error.c_str());
+    registerApiFailure("config_parse", statusCode);
+    return false;
+  }
+
+  registerApiSuccess("config_probe");
+  return true;
 }
 
 bool fetchConfig()
@@ -932,24 +971,26 @@ void FountainApp::update()
     if (apiHealth.shouldProbe(now))
     {
       apiHealth.markProbeAttempt(now);
-      Serial.println("API offline mode: probing Laravel...");
 
-      bool hadQueuedLocalState = localStateSyncPending;
-      FountainOutputState queuedLocalOutputs = outputs;
-
-      if (fetchConfig())
+      if (localStateSyncPending)
       {
-        lastConfigFetchAt = now;
+        Serial.println("API offline mode: probing Laravel before local state sync...");
 
-        if (hadQueuedLocalState)
+        if (probeApiRecovery())
         {
-          outputs = queuedLocalOutputs;
-          markOutputStateTrusted("queued local output state restored after API recovery");
-          applySafetyAndSyncHardware();
+          logCloudModeIfChanged();
+          syncLocalStateIfDue(now);
         }
+      }
+      else
+      {
+        Serial.println("API offline mode: probing Laravel...");
 
-        logCloudModeIfChanged();
-        syncLocalStateIfDue(now);
+        if (fetchConfig())
+        {
+          lastConfigFetchAt = now;
+          logCloudModeIfChanged();
+        }
       }
     }
 
