@@ -10,6 +10,7 @@
 #include "CloudRuntime.h"
 #include "ConfigCache.h"
 #include "ConfigRuntime.h"
+#include "ConfigFlowRuntime.h"
 #include "DailyTimelineRuntime.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
@@ -87,6 +88,7 @@ CommandRuntime commandRuntime;
 CommandFlowRuntime commandFlowRuntime;
 DeviceClock deviceClock;
 ConfigRuntime configRuntime;
+ConfigFlowRuntime configFlowRuntime;
 DailyTimelineRuntime dailyTimelineRuntime;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
@@ -220,40 +222,17 @@ void enforceWaterSafety()
 
 bool loadCachedConfigIfAvailable()
 {
-  String cachedConfigJson;
-  bool cacheExists = false;
-
-  bool parsed = configRuntime.loadCachedConfig(
+  return configFlowRuntime.loadCachedConfigIfAvailable(
+    configRuntime,
     fountainConfig,
     outputs,
     dailyTimeline,
-    cachedConfigJson,
-    cacheExists
+    markOutputStateTrusted,
+    markOutputStateUntrusted,
+    applySafetyAndSyncHardware
   );
-
-  if (!cacheExists)
-  {
-    Serial.println("No cached Laravel config found.");
-    markOutputStateUntrusted("no cached Laravel config; safe boot OFF must not sync to Laravel");
-    return false;
-  }
-
-  Serial.println();
-  Serial.print("Loading cached Laravel config from flash. bytes=");
-  Serial.println(cachedConfigJson.length());
-
-  if (!parsed)
-  {
-    Serial.println("Cached Laravel config exists but could not be parsed.");
-    markOutputStateUntrusted("cached Laravel config parse failed; safe boot OFF must not sync to Laravel");
-    return false;
-  }
-
-  markOutputStateTrusted("cached Laravel config loaded");
-  applySafetyAndSyncHardware();
-  Serial.println("Cached Laravel config loaded. Device will keep this state if Laravel is unavailable.");
-  return true;
 }
+
 
 void serviceRuntimeDuringWifiConnect()
 {
@@ -288,137 +267,40 @@ void registerApiFailure(const char *requestName, int statusCode)
   cloudRuntime.registerFailure(apiHealth, requestName, statusCode);
 }
 
-bool getConfigWithRetry(String &response, int &statusCode, unsigned long timeoutMs = HTTP_TIMEOUT_MS)
-{
-  response = "";
-  statusCode = -1;
-
-  for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
-  {
-    Serial.println();
-    Serial.print("GET ");
-    Serial.println(httpDeviceApi.configUrl());
-
-    bool ok = httpDeviceApi.getConfigWithTimeout(timeoutMs, response, statusCode);
-
-    Serial.print("Config HTTP status: ");
-    Serial.println(statusCode);
-
-    if (ok)
-    {
-      return true;
-    }
-
-    if (attempt < CONFIG_FETCH_MAX_ATTEMPTS)
-    {
-      delay(100);
-    }
-  }
-
-  return false;
-}
-
 bool probeApiRecovery()
 {
-  if (!isWifiConnected())
-  {
-    Serial.println("API recovery probe skipped: Wi-Fi offline.");
-    return false;
-  }
-
-  String response;
-  int statusCode;
-
-  if (!getConfigWithRetry(response, statusCode, API_PROBE_HTTP_TIMEOUT_MS))
-  {
-    if (response.length() > 0)
-    {
-      Serial.println(response);
-    }
-
-    registerApiFailure("config", statusCode);
-    return false;
-  }
-
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, response);
-
-  if (error)
-  {
-    Serial.print("API recovery probe JSON parse failed: ");
-    Serial.println(error.c_str());
-    registerApiFailure("config_parse", statusCode);
-    return false;
-  }
-
-  registerApiSuccess("config_probe");
-  return true;
+  return configFlowRuntime.probeApiRecovery(
+    isWifiConnected(),
+    httpDeviceApi,
+    configRuntime,
+    CONFIG_FETCH_MAX_ATTEMPTS,
+    API_PROBE_HTTP_TIMEOUT_MS,
+    registerApiSuccess,
+    registerApiFailure
+  );
 }
 
 bool fetchConfig()
 {
-  if (!isWifiConnected())
-  {
-    Serial.println("Config fetch skipped: Wi-Fi offline.");
-    return false;
-  }
-
-  String response;
-  int statusCode;
-
-  if (!getConfigWithRetry(response, statusCode))
-  {
-    if (response.length() > 0)
-    {
-      Serial.println(response);
-    }
-
-    registerApiFailure("config", statusCode);
-    return false;
-  }
-
-  JsonDocument doc;
-  JsonObject config;
-  int timezoneOffsetMinutes = 0;
-
-  if (!configRuntime.parseConfigResponse(response, doc, config, serverTimeUtc, deviceType, timezoneOffsetMinutes))
-  {
-    registerApiFailure("config_parse", statusCode);
-    return false;
-  }
-
-  registerApiSuccess("config");
-
-  Serial.print("server_time_utc: ");
-  Serial.println(serverTimeUtc.length() ? serverTimeUtc : "missing");
-
-  Serial.print("device_type: ");
-  Serial.println(deviceType.length() ? deviceType : "missing");
-
-  Serial.print("timezone_offset_minutes: ");
-  Serial.println(timezoneOffsetMinutes);
-
-  deviceClock.syncFromServerTime(serverTimeUtc, timezoneOffsetMinutes);
-
-  if (deviceType != "smart_fountain")
-  {
-    Serial.println("WARNING: config.device_type is not smart_fountain.");
-  }
-
-  fountainConfig.loadInitialOutputs(config, outputs);
-  markOutputStateTrusted("fresh Laravel config fetched");
-  applySafetyAndSyncHardware();
-  fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
-  fountainConfig.printDailyTimeline(dailyTimeline);
-
-  int configJsonLength = 0;
-  configRuntime.saveCompactConfigCache(fountainConfig, config, configJsonLength);
-
-  Serial.print("Compact config cache JSON length: ");
-  Serial.println(configJsonLength);
-
-  return true;
+  return configFlowRuntime.fetchConfig(
+    isWifiConnected(),
+    httpDeviceApi,
+    configRuntime,
+    fountainConfig,
+    deviceClock,
+    outputs,
+    dailyTimeline,
+    serverTimeUtc,
+    deviceType,
+    CONFIG_FETCH_MAX_ATTEMPTS,
+    HTTP_TIMEOUT_MS,
+    registerApiSuccess,
+    registerApiFailure,
+    markOutputStateTrusted,
+    applySafetyAndSyncHardware
+  );
 }
+
 
 bool postState(const char *source = "device_state")
 {
