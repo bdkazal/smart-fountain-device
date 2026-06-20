@@ -54,6 +54,9 @@ const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long HTTP_TIMEOUT_MS = 5000;
 const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
+// Used only while already in API-offline mode. Keep normal requests longer for remote hosting,
+// but keep failed recovery probes shorter so local buttons do not feel frozen.
+const unsigned long API_PROBE_HTTP_TIMEOUT_MS = 2500;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const unsigned long API_PROBE_INTERVAL_MS = 30000;
@@ -391,7 +394,7 @@ void registerApiFailure(const char *requestName, int statusCode)
   apiHealth.registerWarning(requestName, statusCode);
 }
 
-bool getConfigWithRetry(String &response, int &statusCode)
+bool getConfigWithRetry(String &response, int &statusCode, unsigned long timeoutMs = HTTP_TIMEOUT_MS)
 {
   response = "";
   statusCode = -1;
@@ -402,7 +405,7 @@ bool getConfigWithRetry(String &response, int &statusCode)
     Serial.print("GET ");
     Serial.println(httpDeviceApi.configUrl());
 
-    bool ok = httpDeviceApi.getConfig(response, statusCode);
+    bool ok = httpDeviceApi.getConfigWithTimeout(timeoutMs, response, statusCode);
 
     Serial.print("Config HTTP status: ");
     Serial.println(statusCode);
@@ -432,7 +435,7 @@ bool probeApiRecovery()
   String response;
   int statusCode;
 
-  if (!getConfigWithRetry(response, statusCode))
+  if (!getConfigWithRetry(response, statusCode, API_PROBE_HTTP_TIMEOUT_MS))
   {
     if (response.length() > 0)
     {

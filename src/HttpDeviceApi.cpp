@@ -56,6 +56,11 @@ bool HttpDeviceApi::getConfig(String &response, int &statusCode)
   return getUrl(configUrl(), httpTimeoutMs, response, statusCode);
 }
 
+bool HttpDeviceApi::getConfigWithTimeout(unsigned long timeoutMs, String &response, int &statusCode)
+{
+  return getUrl(configUrl(), timeoutMs, response, statusCode);
+}
+
 bool HttpDeviceApi::getCommands(String &response, int &statusCode)
 {
   return getUrl(commandsUrl(), commandHttpTimeoutMs, response, statusCode);
