@@ -105,3 +105,43 @@ void StateSyncRuntime::markLocalStateSyncFailed(unsigned long now)
 {
   localSyncRetryAt = now;
 }
+
+bool StateSyncRuntime::syncLocalStateIfDue(
+  unsigned long now,
+  unsigned long retryMs,
+  bool wifiConnected,
+  bool apiServerOffline,
+  StateSyncPostCallback postLocalState
+)
+{
+  if (!localSyncPending)
+  {
+    return false;
+  }
+
+  if (!wifiConnected)
+  {
+    return false;
+  }
+
+  if (apiServerOffline)
+  {
+    return false;
+  }
+
+  if (!shouldSyncLocalState(now, retryMs))
+  {
+    return false;
+  }
+
+  Serial.println("Syncing local button output change to Laravel...");
+
+  if (postLocalState != nullptr && postLocalState())
+  {
+    markLocalStateSynced();
+    return true;
+  }
+
+  markLocalStateSyncFailed(now);
+  return false;
+}
