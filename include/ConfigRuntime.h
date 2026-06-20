@@ -37,4 +37,10 @@ public:
     String &cachedConfigJson,
     bool &cacheExists
   );
+
+  bool saveCompactConfigCache(
+    FountainConfig &fountainConfig,
+    JsonObject config,
+    int &configJsonLength
+  );
 };

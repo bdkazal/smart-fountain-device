@@ -517,15 +517,11 @@ bool fetchConfig()
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
-  String configJson = fountainConfig.buildCompactCacheJson(config);
+  int configJsonLength = 0;
+  configRuntime.saveCompactConfigCache(fountainConfig, config, configJsonLength);
 
   Serial.print("Compact config cache JSON length: ");
-  Serial.println(configJson.length());
-
-  if (configJson.length() > 0)
-  {
-    saveCachedConfigJsonIfChanged(configJson);
-  }
+  Serial.println(configJsonLength);
 
   return true;
 }

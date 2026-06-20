@@ -91,3 +91,20 @@ bool ConfigRuntime::loadCachedConfig(
     dailyTimeline
   );
 }
+
+bool ConfigRuntime::saveCompactConfigCache(
+  FountainConfig &fountainConfig,
+  JsonObject config,
+  int &configJsonLength
+)
+{
+  String configJson = fountainConfig.buildCompactCacheJson(config);
+  configJsonLength = configJson.length();
+
+  if (configJson.length() == 0)
+  {
+    return false;
+  }
+
+  return saveCachedConfigJsonIfChanged(configJson);
+}
