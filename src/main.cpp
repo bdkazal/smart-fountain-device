@@ -46,11 +46,12 @@ const unsigned long STATE_SYNC_INTERVAL_MS = 10000;
 const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long SERVER_OFFLINE_PROBE_INTERVAL_MS = 30000;
-const unsigned long HTTP_TIMEOUT_MS = 1500;
-const unsigned long COMMAND_HTTP_TIMEOUT_MS = 1500;
+const unsigned long HTTP_TIMEOUT_MS = 3000;
+const unsigned long COMMAND_HTTP_TIMEOUT_MS = 3000;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
+const int SERVER_OFFLINE_FAILURE_THRESHOLD = 3;
 
 enum CloudControlMode
 {
@@ -378,9 +379,8 @@ void registerApiSuccess(const char *requestName)
 
 void registerApiFailure(const char *requestName, int statusCode)
 {
+  bool wasServerOnline = serverReachableRecently;
   consecutiveApiFailures++;
-  serverReachableRecently = false;
-  lastServerProbeAt = millis();
 
   Serial.print("API failure #");
   Serial.print(consecutiveApiFailures);
@@ -388,7 +388,16 @@ void registerApiFailure(const char *requestName, int statusCode)
   Serial.print(requestName);
   Serial.print(" status=");
   Serial.println(statusCode);
-  Serial.println("Laravel unavailable. Keeping Wi-Fi connected and entering quiet server-offline mode.");
+
+  if (!wasServerOnline || consecutiveApiFailures >= SERVER_OFFLINE_FAILURE_THRESHOLD)
+  {
+    serverReachableRecently = false;
+    lastServerProbeAt = millis();
+    Serial.println("Laravel unavailable. Keeping Wi-Fi connected and entering quiet server-offline mode.");
+    return;
+  }
+
+  Serial.println("Transient API failure. Keeping cloud mode online until failure threshold is reached.");
 }
 
 bool getWithRetry(const String &url, String &response, int &statusCode)
