@@ -1,7 +1,6 @@
 #include "FountainApp.h"
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 #include "ApiClient.h"
@@ -12,6 +11,7 @@
 #include "DeviceStorage.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
+#include "HttpDeviceApi.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
 #include "LocalControls.h"
@@ -79,6 +79,7 @@ String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
 
 ApiClient apiClient;
+HttpDeviceApi httpDeviceApi;
 DeviceClock deviceClock;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
@@ -381,30 +382,23 @@ void registerApiFailure(const char *requestName, int statusCode)
   apiHealth.registerWarning(requestName, statusCode);
 }
 
-bool getWithRetry(const String &url, String &response, int &statusCode)
+bool getConfigWithRetry(String &response, int &statusCode)
 {
   response = "";
   statusCode = -1;
 
   for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
   {
-    HTTPClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.begin(url);
-    apiClient.addDeviceHeaders(http);
-
     Serial.println();
     Serial.print("GET ");
-    Serial.println(url);
+    Serial.println(httpDeviceApi.configUrl());
 
-    statusCode = http.GET();
-    response = http.getString();
-    http.end();
+    bool ok = httpDeviceApi.getConfig(response, statusCode);
 
     Serial.print("Config HTTP status: ");
     Serial.println(statusCode);
 
-    if (statusCode >= 200 && statusCode < 300)
+    if (ok)
     {
       return true;
     }
@@ -426,11 +420,10 @@ bool probeApiRecovery()
     return false;
   }
 
-  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
   String response;
   int statusCode;
 
-  if (!getWithRetry(url, response, statusCode))
+  if (!getConfigWithRetry(response, statusCode))
   {
     if (response.length() > 0)
     {
@@ -464,11 +457,10 @@ bool fetchConfig()
     return false;
   }
 
-  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
   String response;
   int statusCode;
 
-  if (!getWithRetry(url, response, statusCode))
+  if (!getConfigWithRetry(response, statusCode))
   {
     if (response.length() > 0)
     {
@@ -593,23 +585,17 @@ bool postState(const char *source = "device_state")
   updateWaterReadings();
   enforceWaterSafety();
 
-  String url = apiClient.url("/api/device/state");
   String payload = buildStatePayload(source);
-
-  HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
+  String response;
+  int statusCode;
 
   Serial.println();
   Serial.print("POST ");
-  Serial.println(url);
+  Serial.println(httpDeviceApi.stateUrl());
   Serial.print("State payload: ");
   Serial.println(payload);
 
-  int statusCode = http.POST(payload);
-  String response = http.getString();
-  http.end();
+  httpDeviceApi.postState(payload, response, statusCode);
 
   Serial.print("State HTTP status: ");
   Serial.println(statusCode);
@@ -670,8 +656,6 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
     return false;
   }
 
-  String url = apiClient.url("/api/device/commands/" + String(commandId) + "/ack");
-
   JsonDocument doc;
   doc["device_uuid"] = DEVICE_UUID;
   doc["status"] = status;
@@ -684,19 +668,15 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
   String payload;
   serializeJson(doc, payload);
 
-  HTTPClient http;
-  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
+  String response;
+  int statusCode;
 
   Serial.print("ACK command ");
   Serial.print(commandId);
   Serial.print(" as ");
   Serial.println(status);
 
-  int statusCode = http.POST(payload);
-  String response = http.getString();
-  http.end();
+  httpDeviceApi.ackCommand(commandId, payload, response, statusCode);
 
   Serial.print("ACK HTTP status: ");
   Serial.println(statusCode);
@@ -822,22 +802,16 @@ bool pollCommands()
     return false;
   }
 
-  String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
+  String response;
+  int statusCode;
 
-  HTTPClient http;
-  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
-
-  int statusCode = http.GET();
-  String response = http.getString();
-  http.end();
+  httpDeviceApi.getCommands(response, statusCode);
 
   if (statusCode < 200 || statusCode >= 300)
   {
     Serial.println();
     Serial.print("GET ");
-    Serial.println(url);
+    Serial.println(httpDeviceApi.commandsUrl());
     Serial.print("Command HTTP status: ");
     Serial.println(statusCode);
     Serial.println(response);
@@ -875,7 +849,7 @@ bool pollCommands()
 
   Serial.println();
   Serial.print("GET ");
-  Serial.println(url);
+  Serial.println(httpDeviceApi.commandsUrl());
   Serial.print("Command HTTP status: ");
   Serial.println(statusCode);
 
@@ -897,6 +871,7 @@ void FountainApp::begin()
   beginDeviceStorage();
   apiHealth.begin(API_OFFLINE_FAILURE_THRESHOLD, API_PROBE_INTERVAL_MS);
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
+  httpDeviceApi.begin(&apiClient, HTTP_TIMEOUT_MS, COMMAND_HTTP_TIMEOUT_MS);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
   localControls.begin();
