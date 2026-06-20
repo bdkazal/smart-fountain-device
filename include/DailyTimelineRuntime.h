@@ -23,7 +23,10 @@ public:
       FountainReadings &readings,
       FountainOutputs &fountainOutputs);
 
-  void markCurrentRangeSatisfied(const char *reason = nullptr);
+  void markCurrentRangeSatisfied(
+      const FountainDailyTimeline &timeline,
+      const DeviceClock &clock,
+      const char *reason = nullptr);
 
 private:
   int lastActiveRangeIndex = -2;
@@ -31,9 +34,9 @@ private:
 
   int findActiveRangeIndex(const FountainDailyTimeline &timeline, int localMinute) const;
   bool isRangeActive(const FountainTimelineRange &range, int localMinute) const;
+
   bool applyRangeOutputs(
       const FountainTimelineRange &range,
-      const char *source,
       FountainOutputState &outputs,
       FountainReadings &readings,
       FountainOutputs &fountainOutputs);

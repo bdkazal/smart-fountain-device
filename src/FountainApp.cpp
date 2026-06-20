@@ -9,6 +9,7 @@
 #include "CloudRuntime.h"
 #include "ConfigCache.h"
 #include "ConfigRuntime.h"
+#include "DailyTimelineRuntime.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
 #include "DeviceStorage.h"
@@ -63,6 +64,7 @@ const unsigned long API_PROBE_HTTP_TIMEOUT_MS = 2500;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const unsigned long API_PROBE_INTERVAL_MS = 30000;
+const unsigned long TIMELINE_EVALUATE_INTERVAL_MS = 5000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
 const int API_OFFLINE_FAILURE_THRESHOLD = 3;
 
@@ -71,18 +73,21 @@ unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
+unsigned long lastTimelineEvaluateAt = 0;
 
 ApiHealth apiHealth;
 CloudRuntime cloudRuntime;
 bool outputStateTrusted = false;
 String serverTimeUtc = "";
 String deviceType = "";
+const char *pendingStateSyncSource = "local_button";
 
 ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
 CommandRuntime commandRuntime;
 DeviceClock deviceClock;
 ConfigRuntime configRuntime;
+DailyTimelineRuntime dailyTimelineRuntime;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
@@ -99,6 +104,7 @@ void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
 bool processLocalControls();
+bool processDailyTimeline();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
@@ -160,10 +166,16 @@ void applySafetyAndSyncHardware()
   syncHardwareOutputs();
 }
 
-void queueLocalStateSync(const char *reason)
+void queueOutputStateSync(const char *reason, const char *source)
 {
   markOutputStateTrusted(reason);
+  pendingStateSyncSource = (source != nullptr && strlen(source) > 0) ? source : "device_state";
   stateSyncRuntime.queueLocalStateSync();
+}
+
+void queueLocalStateSync(const char *reason)
+{
+  queueOutputStateSync(reason, "local_button");
 }
 
 bool processLocalControls()
@@ -178,6 +190,12 @@ bool processLocalControls()
 
   if (changed)
   {
+    dailyTimelineRuntime.markCurrentRangeSatisfied(
+      dailyTimeline,
+      deviceClock,
+      "local control changed output state"
+    );
+
     queueLocalStateSync("local button changed output state");
     applySafetyAndSyncHardware();
   }
@@ -454,9 +472,9 @@ bool postState(const char *source = "device_state")
   return true;
 }
 
-bool postLocalButtonState()
+bool postPendingOutputState()
 {
-  return postState("local_button");
+  return postState(pendingStateSyncSource);
 }
 
 bool syncLocalStateIfDue(unsigned long now)
@@ -466,7 +484,7 @@ bool syncLocalStateIfDue(unsigned long now)
     LOCAL_STATE_SYNC_RETRY_MS,
     isWifiConnected(),
     apiHealth.isServerOffline(),
-    postLocalButtonState
+    postPendingOutputState
   );
 
   if (synced)
@@ -577,6 +595,12 @@ void processCommand(JsonObject command)
 
   if (applied)
   {
+    dailyTimelineRuntime.markCurrentRangeSatisfied(
+      dailyTimeline,
+      deviceClock,
+      "cloud command applied"
+    );
+
     markOutputStateTrusted("cloud command applied");
     ackCommand(commandId, "executed");
   }
@@ -586,6 +610,32 @@ void processCommand(JsonObject command)
   }
 
   postState("device_state");
+}
+
+bool processDailyTimeline()
+{
+  updateWaterReadings();
+
+  bool cloudAvailable = isWifiConnected() && !apiHealth.isServerOffline();
+
+  DailyTimelineResult result = dailyTimelineRuntime.update(
+    dailyTimeline,
+    deviceClock,
+    cloudAvailable,
+    outputs,
+    readings,
+    fountainOutputs
+  );
+
+  if (!result.applied)
+  {
+    return false;
+  }
+
+  queueOutputStateSync(result.reason, result.stateSource);
+  applySafetyAndSyncHardware();
+
+  return true;
 }
 
 bool pollCommands()
@@ -693,14 +743,24 @@ void FountainApp::begin()
 
   if (isWifiConnected())
   {
-    fetchConfig();
-    postState("boot");
-    pollCommands();
+    bool configFetched = fetchConfig();
 
     unsigned long now = millis();
     lastConfigFetchAt = now;
     lastStateSyncAt = now;
     lastCommandPollAt = now;
+    lastTimelineEvaluateAt = now;
+
+    if (configFetched && processDailyTimeline())
+    {
+      syncLocalStateIfDue(now);
+    }
+    else
+    {
+      postState("boot");
+    }
+
+    pollCommands();
   }
 
   Serial.println("Local controls and water safety are active during runtime.");
@@ -723,6 +783,17 @@ void FountainApp::update()
   updateWaterReadings();
   enforceWaterSafety();
   logCloudModeIfChanged();
+
+  if (lastTimelineEvaluateAt == 0 || now - lastTimelineEvaluateAt >= TIMELINE_EVALUATE_INTERVAL_MS)
+  {
+    bool timelineChanged = processDailyTimeline();
+    lastTimelineEvaluateAt = now;
+
+    if (timelineChanged && isWifiConnected() && !apiHealth.isServerOffline())
+    {
+      syncLocalStateIfDue(now);
+    }
+  }
 
   if (!isWifiConnected())
   {

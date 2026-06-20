@@ -10,9 +10,25 @@ DailyTimelineResult DailyTimelineRuntime::update(
 {
   DailyTimelineResult result;
 
-  if (!timeline.enabled || !clock.isTimeValid())
+  if (!timeline.enabled)
   {
-    lastActiveRangeIndex = -1;
+    if (lastActiveRangeIndex != -1)
+    {
+      Serial.println("DailyTimeline inactive: daily timeline disabled.");
+      lastActiveRangeIndex = -1;
+    }
+
+    return result;
+  }
+
+  if (!clock.isTimeValid())
+  {
+    if (lastActiveRangeIndex != -1)
+    {
+      Serial.println("DailyTimeline inactive: device time is not valid.");
+      lastActiveRangeIndex = -1;
+    }
+
     return result;
   }
 
@@ -22,11 +38,19 @@ DailyTimelineResult DailyTimelineRuntime::update(
   {
     lastActiveRangeIndex = activeIndex;
 
-    if (activeIndex >= 0)
+    if (activeIndex < 0)
+    {
+      Serial.print("DailyTimeline: no active range at local time ");
+      Serial.println(clock.localTimeHHMM());
+    }
+    else
     {
       const FountainTimelineRange &range = timeline.ranges[activeIndex];
+
       Serial.print("DailyTimeline active range: ");
       Serial.print(range.period.length() ? range.period : "unknown");
+      Serial.print(" scene: ");
+      Serial.print(range.sceneName.length() ? range.sceneName : "missing scene");
       Serial.print(" local_time=");
       Serial.println(clock.localTimeHHMM());
     }
@@ -43,19 +67,21 @@ DailyTimelineResult DailyTimelineRuntime::update(
   }
 
   const FountainTimelineRange &range = timeline.ranges[activeIndex];
-  const char *source = cloudAvailable ? "device_timeline" : "offline_timeline";
 
   Serial.print("DailyTimeline applying range: ");
-  Serial.println(range.period.length() ? range.period : "unknown");
+  Serial.print(range.period.length() ? range.period : "unknown");
+  Serial.print(" scene: ");
+  Serial.println(range.sceneName.length() ? range.sceneName : "missing scene");
 
-  if (!applyRangeOutputs(range, source, outputs, readings, fountainOutputs))
+  if (!applyRangeOutputs(range, outputs, readings, fountainOutputs))
   {
     return result;
   }
 
   lastAppliedRangeIndex = activeIndex;
+
   result.applied = true;
-  result.stateSource = source;
+  result.stateSource = cloudAvailable ? "device_timeline" : "offline_timeline";
   result.reason = cloudAvailable
     ? "device daily timeline changed output state"
     : "offline daily timeline changed output state";
@@ -63,14 +89,26 @@ DailyTimelineResult DailyTimelineRuntime::update(
   return result;
 }
 
-void DailyTimelineRuntime::markCurrentRangeSatisfied(const char *reason)
+void DailyTimelineRuntime::markCurrentRangeSatisfied(
+    const FountainDailyTimeline &timeline,
+    const DeviceClock &clock,
+    const char *reason)
 {
-  if (lastActiveRangeIndex < 0 || lastAppliedRangeIndex == lastActiveRangeIndex)
+  if (!timeline.enabled || !clock.isTimeValid())
   {
     return;
   }
 
-  lastAppliedRangeIndex = lastActiveRangeIndex;
+  int activeIndex = findActiveRangeIndex(timeline, clock.localMinutesOfDay());
+
+  if (activeIndex < 0)
+  {
+    return;
+  }
+
+  lastActiveRangeIndex = activeIndex;
+  lastAppliedRangeIndex = activeIndex;
+
   Serial.print("DailyTimeline current range marked satisfied");
 
   if (reason != nullptr && strlen(reason) > 0)
@@ -117,15 +155,16 @@ bool DailyTimelineRuntime::isRangeActive(const FountainTimelineRange &range, int
 
 bool DailyTimelineRuntime::applyRangeOutputs(
     const FountainTimelineRange &range,
-    const char *source,
     FountainOutputState &outputs,
     FountainReadings &readings,
     FountainOutputs &fountainOutputs)
 {
   outputs.pumpEnabled = range.outputs.pumpEnabled;
   outputs.pumpSpeedPercent = range.outputs.pumpSpeedPercent;
+
   outputs.cobEnabled = range.outputs.cobEnabled;
   outputs.cobBrightnessPercent = range.outputs.cobBrightnessPercent;
+
   outputs.rgbEnabled = range.outputs.rgbEnabled;
   outputs.rgbBrightnessPercent = range.outputs.rgbBrightnessPercent;
   outputs.rgbColor = range.outputs.rgbColor;

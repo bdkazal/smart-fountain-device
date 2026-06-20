@@ -72,7 +72,7 @@ void StateSyncRuntime::queueLocalStateSync()
 {
   localSyncPending = true;
   localSyncRetryAt = 0;
-  Serial.println("Local output change queued for Laravel state sync.");
+  Serial.println("Output change queued for Laravel state sync.");
 }
 
 bool StateSyncRuntime::hasPendingLocalSync() const
@@ -134,7 +134,7 @@ bool StateSyncRuntime::syncLocalStateIfDue(
     return false;
   }
 
-  Serial.println("Syncing local button output change to Laravel...");
+  Serial.println("Syncing pending output state to Laravel...");
 
   if (postLocalState != nullptr && postLocalState())
   {
