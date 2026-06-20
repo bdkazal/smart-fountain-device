@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "HttpDeviceApi.h"
 
 class CommandRuntime
@@ -13,5 +14,13 @@ public:
     const char *message,
     String &response,
     int &statusCode
+  );
+
+  bool fetchCommand(
+    HttpDeviceApi &httpDeviceApi,
+    JsonDocument &doc,
+    String &response,
+    int &statusCode,
+    bool &parseOk
   );
 };

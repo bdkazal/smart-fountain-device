@@ -751,32 +751,29 @@ bool pollCommands()
     return false;
   }
 
+  JsonDocument doc;
   String response;
   int statusCode;
+  bool parseOk = false;
 
-  httpDeviceApi.getCommands(response, statusCode);
+  bool fetched = commandRuntime.fetchCommand(
+    httpDeviceApi,
+    doc,
+    response,
+    statusCode,
+    parseOk
+  );
 
   if (statusCode < 200 || statusCode >= 300)
   {
-    Serial.println();
-    Serial.print("GET ");
-    Serial.println(httpDeviceApi.commandsUrl());
-    Serial.print("Command HTTP status: ");
-    Serial.println(statusCode);
-    Serial.println(response);
     registerApiFailure("commands", statusCode);
     return false;
   }
 
   registerApiSuccess("commands");
 
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, response);
-
-  if (error)
+  if (!fetched || !parseOk)
   {
-    Serial.print("Command JSON parse failed: ");
-    Serial.println(error.c_str());
     registerApiFailure("commands_parse", statusCode);
     return false;
   }
