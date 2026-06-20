@@ -1,21 +1,23 @@
 #include "FountainApp.h"
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <ArduinoJson.h>
 
 #include "ApiClient.h"
 #include "ApiHealth.h"
+#include "CommandRuntime.h"
 #include "ConfigCache.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
 #include "DeviceStorage.h"
 #include "FountainConfig.h"
 #include "FountainOutputs.h"
+#include "HttpDeviceApi.h"
 #include "FountainTypes.h"
 #include "HardwareOutputs.h"
 #include "LocalControls.h"
 #include "SetupPortal.h"
+#include "StateSyncRuntime.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
 
@@ -69,16 +71,16 @@ unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
-unsigned long localStateSyncRetryAt = 0;
 
 ApiHealth apiHealth;
 bool outputStateTrusted = false;
-bool localStateSyncPending = false;
 String serverTimeUtc = "";
 String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
 
 ApiClient apiClient;
+HttpDeviceApi httpDeviceApi;
+CommandRuntime commandRuntime;
 DeviceClock deviceClock;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
@@ -88,6 +90,7 @@ WaterLevelSensor waterLevelSensor;
 FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 LocalControls localControls;
+StateSyncRuntime stateSyncRuntime;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
@@ -158,9 +161,7 @@ void applySafetyAndSyncHardware()
 void queueLocalStateSync(const char *reason)
 {
   markOutputStateTrusted(reason);
-  localStateSyncPending = true;
-  localStateSyncRetryAt = 0;
-  Serial.println("Local output change queued for Laravel state sync.");
+  stateSyncRuntime.queueLocalStateSync();
 }
 
 bool processLocalControls()
@@ -381,30 +382,23 @@ void registerApiFailure(const char *requestName, int statusCode)
   apiHealth.registerWarning(requestName, statusCode);
 }
 
-bool getWithRetry(const String &url, String &response, int &statusCode)
+bool getConfigWithRetry(String &response, int &statusCode)
 {
   response = "";
   statusCode = -1;
 
   for (int attempt = 1; attempt <= CONFIG_FETCH_MAX_ATTEMPTS; attempt++)
   {
-    HTTPClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.begin(url);
-    apiClient.addDeviceHeaders(http);
-
     Serial.println();
     Serial.print("GET ");
-    Serial.println(url);
+    Serial.println(httpDeviceApi.configUrl());
 
-    statusCode = http.GET();
-    response = http.getString();
-    http.end();
+    bool ok = httpDeviceApi.getConfig(response, statusCode);
 
     Serial.print("Config HTTP status: ");
     Serial.println(statusCode);
 
-    if (statusCode >= 200 && statusCode < 300)
+    if (ok)
     {
       return true;
     }
@@ -426,11 +420,10 @@ bool probeApiRecovery()
     return false;
   }
 
-  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
   String response;
   int statusCode;
 
-  if (!getWithRetry(url, response, statusCode))
+  if (!getConfigWithRetry(response, statusCode))
   {
     if (response.length() > 0)
     {
@@ -464,11 +457,10 @@ bool fetchConfig()
     return false;
   }
 
-  String url = apiClient.url("/api/device/config?device_uuid=" + String(DEVICE_UUID));
   String response;
   int statusCode;
 
-  if (!getWithRetry(url, response, statusCode))
+  if (!getConfigWithRetry(response, statusCode))
   {
     if (response.length() > 0)
     {
@@ -532,44 +524,6 @@ bool fetchConfig()
   return true;
 }
 
-String buildStatePayload(const char *source)
-{
-  JsonDocument doc;
-
-  doc["device_uuid"] = DEVICE_UUID;
-  doc["device_type"] = "smart_fountain";
-  doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["operation_state"] = readings.waterLow ? "water_low_lockout" : "running";
-
-  JsonObject outputJson = doc["outputs"].to<JsonObject>();
-
-  JsonObject pump = outputJson["pump"].to<JsonObject>();
-  pump["enabled"] = outputs.pumpEnabled;
-  pump["source"] = readings.waterLow ? "water_safety" : source;
-
-  JsonObject cob = outputJson["cob_light"].to<JsonObject>();
-  cob["enabled"] = outputs.cobEnabled;
-  cob["source"] = source;
-
-  JsonObject rgb = outputJson["rgb_light"].to<JsonObject>();
-  rgb["enabled"] = outputs.rgbEnabled;
-  rgb["brightness_percent"] = outputs.rgbBrightnessPercent;
-  rgb["color"] = outputs.rgbColor;
-  rgb["effect"] = outputs.rgbEffect;
-  rgb["source"] = source;
-
-  JsonObject readingsJson = doc["readings"].to<JsonObject>();
-
-  JsonObject waterLow = readingsJson["water_low"].to<JsonObject>();
-  waterLow["value"] = readings.waterLow ? 1 : 0;
-  waterLow["unit"] = "boolean";
-
-  String payload;
-  serializeJson(doc, payload);
-
-  return payload;
-}
-
 bool postState(const char *source = "device_state")
 {
   if (!isWifiConnected())
@@ -593,23 +547,18 @@ bool postState(const char *source = "device_state")
   updateWaterReadings();
   enforceWaterSafety();
 
-  String url = apiClient.url("/api/device/state");
-  String payload = buildStatePayload(source);
+  String response;
+  int statusCode;
 
-  HTTPClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
-
-  Serial.println();
-  Serial.print("POST ");
-  Serial.println(url);
-  Serial.print("State payload: ");
-  Serial.println(payload);
-
-  int statusCode = http.POST(payload);
-  String response = http.getString();
-  http.end();
+  stateSyncRuntime.postState(
+    httpDeviceApi,
+    source,
+    outputs,
+    readings,
+    FIRMWARE_VERSION,
+    response,
+    statusCode
+  );
 
   Serial.print("State HTTP status: ");
   Serial.println(statusCode);
@@ -628,7 +577,7 @@ bool postState(const char *source = "device_state")
 
 bool syncLocalStateIfDue(unsigned long now)
 {
-  if (!localStateSyncPending)
+  if (!stateSyncRuntime.hasPendingLocalSync())
   {
     return false;
   }
@@ -643,7 +592,7 @@ bool syncLocalStateIfDue(unsigned long now)
     return false;
   }
 
-  if (localStateSyncRetryAt != 0 && now - localStateSyncRetryAt < LOCAL_STATE_SYNC_RETRY_MS)
+  if (!stateSyncRuntime.shouldSyncLocalState(now, LOCAL_STATE_SYNC_RETRY_MS))
   {
     return false;
   }
@@ -652,13 +601,12 @@ bool syncLocalStateIfDue(unsigned long now)
 
   if (postState("local_button"))
   {
-    localStateSyncPending = false;
-    localStateSyncRetryAt = 0;
+    stateSyncRuntime.markLocalStateSynced();
     lastStateSyncAt = now;
     return true;
   }
 
-  localStateSyncRetryAt = now;
+  stateSyncRuntime.markLocalStateSyncFailed(now);
   return false;
 }
 
@@ -670,36 +618,17 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
     return false;
   }
 
-  String url = apiClient.url("/api/device/commands/" + String(commandId) + "/ack");
+  String response;
+  int statusCode;
 
-  JsonDocument doc;
-  doc["device_uuid"] = DEVICE_UUID;
-  doc["status"] = status;
-
-  if (message != nullptr)
-  {
-    doc["message"] = message;
-  }
-
-  String payload;
-  serializeJson(doc, payload);
-
-  HTTPClient http;
-  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
-
-  Serial.print("ACK command ");
-  Serial.print(commandId);
-  Serial.print(" as ");
-  Serial.println(status);
-
-  int statusCode = http.POST(payload);
-  String response = http.getString();
-  http.end();
-
-  Serial.print("ACK HTTP status: ");
-  Serial.println(statusCode);
+  commandRuntime.ackCommand(
+    httpDeviceApi,
+    commandId,
+    status,
+    message,
+    response,
+    statusCode
+  );
 
   if (statusCode < 200 || statusCode >= 300)
   {
@@ -714,46 +643,29 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
 
 bool handleOutputSet(JsonObject payload)
 {
-  const char *outputKey = payload["output"] | "";
-  JsonObject state = payload["state"].as<JsonObject>();
-  const char *source = payload["source"] | "dashboard";
-
-  if (strlen(outputKey) == 0 || state.isNull())
-  {
-    Serial.println("Invalid output_set payload.");
-    return false;
-  }
-
   updateWaterReadings();
-  bool applied = fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
+
+  bool applied = commandRuntime.handleOutputSet(
+    payload,
+    fountainOutputs,
+    outputs,
+    readings
+  );
+
   applySafetyAndSyncHardware();
   return applied;
 }
 
 bool handleSceneApply(JsonObject payload)
 {
-  JsonObject sceneOutputs = payload["outputs"].as<JsonObject>();
-  const char *source = payload["source"] | "scene_apply";
-
-  if (sceneOutputs.isNull())
-  {
-    Serial.println("Invalid scene_apply payload: outputs missing.");
-    return false;
-  }
-
-  bool allApplied = true;
   updateWaterReadings();
 
-  for (JsonPair outputPair : sceneOutputs)
-  {
-    const char *outputKey = outputPair.key().c_str();
-    JsonObject state = outputPair.value().as<JsonObject>();
-
-    if (!fountainOutputs.applyOutput(outputKey, state, source, outputs, readings))
-    {
-      allApplied = false;
-    }
-  }
+  bool allApplied = commandRuntime.handleSceneApply(
+    payload,
+    fountainOutputs,
+    outputs,
+    readings
+  );
 
   applySafetyAndSyncHardware();
   return allApplied;
@@ -822,38 +734,29 @@ bool pollCommands()
     return false;
   }
 
-  String url = apiClient.url("/api/device/commands?device_uuid=" + String(DEVICE_UUID));
+  JsonDocument doc;
+  String response;
+  int statusCode;
+  bool parseOk = false;
 
-  HTTPClient http;
-  http.setTimeout(COMMAND_HTTP_TIMEOUT_MS);
-  http.begin(url);
-  apiClient.addDeviceHeaders(http);
-
-  int statusCode = http.GET();
-  String response = http.getString();
-  http.end();
+  bool fetched = commandRuntime.fetchCommand(
+    httpDeviceApi,
+    doc,
+    response,
+    statusCode,
+    parseOk
+  );
 
   if (statusCode < 200 || statusCode >= 300)
   {
-    Serial.println();
-    Serial.print("GET ");
-    Serial.println(url);
-    Serial.print("Command HTTP status: ");
-    Serial.println(statusCode);
-    Serial.println(response);
     registerApiFailure("commands", statusCode);
     return false;
   }
 
   registerApiSuccess("commands");
 
-  JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, response);
-
-  if (error)
+  if (!fetched || !parseOk)
   {
-    Serial.print("Command JSON parse failed: ");
-    Serial.println(error.c_str());
     registerApiFailure("commands_parse", statusCode);
     return false;
   }
@@ -875,7 +778,7 @@ bool pollCommands()
 
   Serial.println();
   Serial.print("GET ");
-  Serial.println(url);
+  Serial.println(httpDeviceApi.commandsUrl());
   Serial.print("Command HTTP status: ");
   Serial.println(statusCode);
 
@@ -897,6 +800,7 @@ void FountainApp::begin()
   beginDeviceStorage();
   apiHealth.begin(API_OFFLINE_FAILURE_THRESHOLD, API_PROBE_INTERVAL_MS);
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
+  httpDeviceApi.begin(&apiClient, HTTP_TIMEOUT_MS, COMMAND_HTTP_TIMEOUT_MS);
   hardwareOutputs.begin();
   waterLevelSensor.begin();
   localControls.begin();
@@ -972,7 +876,7 @@ void FountainApp::update()
     {
       apiHealth.markProbeAttempt(now);
 
-      if (localStateSyncPending)
+      if (stateSyncRuntime.hasPendingLocalSync())
       {
         Serial.println("API offline mode: probing Laravel before local state sync...");
 
