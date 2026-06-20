@@ -4,6 +4,8 @@
 #include "FountainTypes.h"
 #include "HttpDeviceApi.h"
 
+typedef bool (*StateSyncPostCallback)();
+
 class StateSyncRuntime
 {
 public:
@@ -27,6 +29,13 @@ public:
   void queueLocalStateSync();
   bool hasPendingLocalSync() const;
   bool shouldSyncLocalState(unsigned long now, unsigned long retryMs) const;
+  bool syncLocalStateIfDue(
+    unsigned long now,
+    unsigned long retryMs,
+    bool wifiConnected,
+    bool apiServerOffline,
+    StateSyncPostCallback postLocalState
+  );
   void markLocalStateSynced();
   void markLocalStateSyncFailed(unsigned long now);
 

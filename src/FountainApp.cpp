@@ -454,39 +454,27 @@ bool postState(const char *source = "device_state")
   return true;
 }
 
+bool postLocalButtonState()
+{
+  return postState("local_button");
+}
+
 bool syncLocalStateIfDue(unsigned long now)
 {
-  if (!stateSyncRuntime.hasPendingLocalSync())
-  {
-    return false;
-  }
+  bool synced = stateSyncRuntime.syncLocalStateIfDue(
+    now,
+    LOCAL_STATE_SYNC_RETRY_MS,
+    isWifiConnected(),
+    apiHealth.isServerOffline(),
+    postLocalButtonState
+  );
 
-  if (!isWifiConnected())
+  if (synced)
   {
-    return false;
-  }
-
-  if (apiHealth.isServerOffline())
-  {
-    return false;
-  }
-
-  if (!stateSyncRuntime.shouldSyncLocalState(now, LOCAL_STATE_SYNC_RETRY_MS))
-  {
-    return false;
-  }
-
-  Serial.println("Syncing local button output change to Laravel...");
-
-  if (postState("local_button"))
-  {
-    stateSyncRuntime.markLocalStateSynced();
     lastStateSyncAt = now;
-    return true;
   }
 
-  stateSyncRuntime.markLocalStateSyncFailed(now);
-  return false;
+  return synced;
 }
 
 bool ackCommand(int commandId, const char *status, const char *message = nullptr)
