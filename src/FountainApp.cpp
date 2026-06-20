@@ -643,46 +643,29 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
 
 bool handleOutputSet(JsonObject payload)
 {
-  const char *outputKey = payload["output"] | "";
-  JsonObject state = payload["state"].as<JsonObject>();
-  const char *source = payload["source"] | "dashboard";
-
-  if (strlen(outputKey) == 0 || state.isNull())
-  {
-    Serial.println("Invalid output_set payload.");
-    return false;
-  }
-
   updateWaterReadings();
-  bool applied = fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
+
+  bool applied = commandRuntime.handleOutputSet(
+    payload,
+    fountainOutputs,
+    outputs,
+    readings
+  );
+
   applySafetyAndSyncHardware();
   return applied;
 }
 
 bool handleSceneApply(JsonObject payload)
 {
-  JsonObject sceneOutputs = payload["outputs"].as<JsonObject>();
-  const char *source = payload["source"] | "scene_apply";
-
-  if (sceneOutputs.isNull())
-  {
-    Serial.println("Invalid scene_apply payload: outputs missing.");
-    return false;
-  }
-
-  bool allApplied = true;
   updateWaterReadings();
 
-  for (JsonPair outputPair : sceneOutputs)
-  {
-    const char *outputKey = outputPair.key().c_str();
-    JsonObject state = outputPair.value().as<JsonObject>();
-
-    if (!fountainOutputs.applyOutput(outputKey, state, source, outputs, readings))
-    {
-      allApplied = false;
-    }
-  }
+  bool allApplied = commandRuntime.handleSceneApply(
+    payload,
+    fountainOutputs,
+    outputs,
+    readings
+  );
 
   applySafetyAndSyncHardware();
   return allApplied;

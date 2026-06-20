@@ -76,3 +76,56 @@ bool CommandRuntime::fetchCommand(
   parseOk = true;
   return true;
 }
+
+bool CommandRuntime::handleOutputSet(
+  JsonObject payload,
+  FountainOutputs &fountainOutputs,
+  FountainOutputState &outputs,
+  FountainReadings &readings
+)
+{
+  const char *outputKey = payload["output"] | "";
+  JsonObject state = payload["state"].as<JsonObject>();
+  const char *source = payload["source"] | "dashboard";
+
+  if (strlen(outputKey) == 0 || state.isNull())
+  {
+    Serial.println("Invalid output_set payload.");
+    return false;
+  }
+
+  bool applied = fountainOutputs.applyOutput(outputKey, state, source, outputs, readings);
+  return applied;
+}
+
+bool CommandRuntime::handleSceneApply(
+  JsonObject payload,
+  FountainOutputs &fountainOutputs,
+  FountainOutputState &outputs,
+  FountainReadings &readings
+)
+{
+  JsonObject sceneOutputs = payload["outputs"].as<JsonObject>();
+  const char *source = payload["source"] | "scene_apply";
+
+  if (sceneOutputs.isNull())
+  {
+    Serial.println("Invalid scene_apply payload: outputs missing.");
+    return false;
+  }
+
+  bool allApplied = true;
+
+  for (JsonPair outputPair : sceneOutputs)
+  {
+    const char *outputKey = outputPair.key().c_str();
+    JsonObject state = outputPair.value().as<JsonObject>();
+
+    if (!fountainOutputs.applyOutput(outputKey, state, source, outputs, readings))
+    {
+      allApplied = false;
+    }
+  }
+
+  return allApplied;
+}

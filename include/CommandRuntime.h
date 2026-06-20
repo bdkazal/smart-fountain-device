@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include "HttpDeviceApi.h"
+#include "FountainOutputs.h"
 
 class CommandRuntime
 {
@@ -22,5 +23,19 @@ public:
     String &response,
     int &statusCode,
     bool &parseOk
+  );
+
+  bool handleOutputSet(
+    JsonObject payload,
+    FountainOutputs &fountainOutputs,
+    FountainOutputState &outputs,
+    FountainReadings &readings
+  );
+
+  bool handleSceneApply(
+    JsonObject payload,
+    FountainOutputs &fountainOutputs,
+    FountainOutputState &outputs,
+    FountainReadings &readings
   );
 };
