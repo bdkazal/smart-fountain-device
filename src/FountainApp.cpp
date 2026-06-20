@@ -5,6 +5,7 @@
 
 #include "ApiClient.h"
 #include "ApiHealth.h"
+#include "CommandRuntime.h"
 #include "ConfigCache.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
@@ -79,6 +80,7 @@ CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
 
 ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
+CommandRuntime commandRuntime;
 DeviceClock deviceClock;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
@@ -616,30 +618,17 @@ bool ackCommand(int commandId, const char *status, const char *message = nullptr
     return false;
   }
 
-  JsonDocument doc;
-  doc["device_uuid"] = DEVICE_UUID;
-  doc["status"] = status;
-
-  if (message != nullptr)
-  {
-    doc["message"] = message;
-  }
-
-  String payload;
-  serializeJson(doc, payload);
-
   String response;
   int statusCode;
 
-  Serial.print("ACK command ");
-  Serial.print(commandId);
-  Serial.print(" as ");
-  Serial.println(status);
-
-  httpDeviceApi.ackCommand(commandId, payload, response, statusCode);
-
-  Serial.print("ACK HTTP status: ");
-  Serial.println(statusCode);
+  commandRuntime.ackCommand(
+    httpDeviceApi,
+    commandId,
+    status,
+    message,
+    response,
+    statusCode
+  );
 
   if (statusCode < 200 || statusCode >= 300)
   {
