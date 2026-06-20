@@ -7,6 +7,7 @@
 #include "ApiHealth.h"
 #include "CommandRuntime.h"
 #include "ConfigCache.h"
+#include "ConfigRuntime.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
 #include "DeviceStorage.h"
@@ -82,6 +83,7 @@ ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
 CommandRuntime commandRuntime;
 DeviceClock deviceClock;
+ConfigRuntime configRuntime;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
@@ -472,22 +474,16 @@ bool fetchConfig()
   }
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, response);
+  JsonObject config;
+  int timezoneOffsetMinutes = 0;
 
-  if (error)
+  if (!configRuntime.parseConfigResponse(response, doc, config, serverTimeUtc, deviceType, timezoneOffsetMinutes))
   {
-    Serial.print("Config JSON parse failed: ");
-    Serial.println(error.c_str());
     registerApiFailure("config_parse", statusCode);
     return false;
   }
 
   registerApiSuccess("config");
-  serverTimeUtc = doc["server_time_utc"] | "";
-
-  JsonObject config = doc["config"].as<JsonObject>();
-  deviceType = config["device_type"] | "";
-  int timezoneOffsetMinutes = config["timezone_offset_minutes"] | 0;
 
   Serial.print("server_time_utc: ");
   Serial.println(serverTimeUtc.length() ? serverTimeUtc : "missing");
