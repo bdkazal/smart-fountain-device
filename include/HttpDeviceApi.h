@@ -14,6 +14,7 @@ public:
   String ackUrl(int commandId) const;
 
   bool getConfig(String &response, int &statusCode);
+  bool getConfigWithTimeout(unsigned long timeoutMs, String &response, int &statusCode);
   bool getCommands(String &response, int &statusCode);
   bool postState(const String &payload, String &response, int &statusCode);
   bool ackCommand(int commandId, const String &payload, String &response, int &statusCode);

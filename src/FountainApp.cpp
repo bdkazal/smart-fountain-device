@@ -7,6 +7,7 @@
 #include "ApiHealth.h"
 #include "CommandRuntime.h"
 #include "ConfigCache.h"
+#include "ConfigRuntime.h"
 #include "DeviceClock.h"
 #include "DeviceSecrets.h"
 #include "DeviceStorage.h"
@@ -53,6 +54,9 @@ const unsigned long COMMAND_POLL_INTERVAL_MS = 2000;
 const unsigned long WIFI_RETRY_INTERVAL_MS = 10000;
 const unsigned long HTTP_TIMEOUT_MS = 5000;
 const unsigned long COMMAND_HTTP_TIMEOUT_MS = 5000;
+// Used only while already in API-offline mode. Keep normal requests longer for remote hosting,
+// but keep failed recovery probes shorter so local buttons do not feel frozen.
+const unsigned long API_PROBE_HTTP_TIMEOUT_MS = 2500;
 const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const unsigned long API_PROBE_INTERVAL_MS = 30000;
@@ -82,6 +86,7 @@ ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
 CommandRuntime commandRuntime;
 DeviceClock deviceClock;
+ConfigRuntime configRuntime;
 FountainConfig fountainConfig;
 FountainOutputState outputs;
 FountainReadings readings;
@@ -254,9 +259,18 @@ void enforceWaterSafety()
 
 bool loadCachedConfigIfAvailable()
 {
-  String cachedConfigJson = loadCachedConfigJson();
+  String cachedConfigJson;
+  bool cacheExists = false;
 
-  if (cachedConfigJson.length() == 0)
+  bool parsed = configRuntime.loadCachedConfig(
+    fountainConfig,
+    outputs,
+    dailyTimeline,
+    cachedConfigJson,
+    cacheExists
+  );
+
+  if (!cacheExists)
   {
     Serial.println("No cached Laravel config found.");
     markOutputStateUntrusted("no cached Laravel config; safe boot OFF must not sync to Laravel");
@@ -266,8 +280,6 @@ bool loadCachedConfigIfAvailable()
   Serial.println();
   Serial.print("Loading cached Laravel config from flash. bytes=");
   Serial.println(cachedConfigJson.length());
-
-  bool parsed = fountainConfig.loadFromConfigObjectJson(cachedConfigJson, outputs, dailyTimeline);
 
   if (!parsed)
   {
@@ -382,7 +394,7 @@ void registerApiFailure(const char *requestName, int statusCode)
   apiHealth.registerWarning(requestName, statusCode);
 }
 
-bool getConfigWithRetry(String &response, int &statusCode)
+bool getConfigWithRetry(String &response, int &statusCode, unsigned long timeoutMs = HTTP_TIMEOUT_MS)
 {
   response = "";
   statusCode = -1;
@@ -393,7 +405,7 @@ bool getConfigWithRetry(String &response, int &statusCode)
     Serial.print("GET ");
     Serial.println(httpDeviceApi.configUrl());
 
-    bool ok = httpDeviceApi.getConfig(response, statusCode);
+    bool ok = httpDeviceApi.getConfigWithTimeout(timeoutMs, response, statusCode);
 
     Serial.print("Config HTTP status: ");
     Serial.println(statusCode);
@@ -423,7 +435,7 @@ bool probeApiRecovery()
   String response;
   int statusCode;
 
-  if (!getConfigWithRetry(response, statusCode))
+  if (!getConfigWithRetry(response, statusCode, API_PROBE_HTTP_TIMEOUT_MS))
   {
     if (response.length() > 0)
     {
@@ -472,22 +484,16 @@ bool fetchConfig()
   }
 
   JsonDocument doc;
-  DeserializationError error = deserializeJson(doc, response);
+  JsonObject config;
+  int timezoneOffsetMinutes = 0;
 
-  if (error)
+  if (!configRuntime.parseConfigResponse(response, doc, config, serverTimeUtc, deviceType, timezoneOffsetMinutes))
   {
-    Serial.print("Config JSON parse failed: ");
-    Serial.println(error.c_str());
     registerApiFailure("config_parse", statusCode);
     return false;
   }
 
   registerApiSuccess("config");
-  serverTimeUtc = doc["server_time_utc"] | "";
-
-  JsonObject config = doc["config"].as<JsonObject>();
-  deviceType = config["device_type"] | "";
-  int timezoneOffsetMinutes = config["timezone_offset_minutes"] | 0;
 
   Serial.print("server_time_utc: ");
   Serial.println(serverTimeUtc.length() ? serverTimeUtc : "missing");
@@ -511,15 +517,11 @@ bool fetchConfig()
   fountainConfig.loadDailyTimeline(config["daily_timeline"].as<JsonObject>(), dailyTimeline);
   fountainConfig.printDailyTimeline(dailyTimeline);
 
-  String configJson = fountainConfig.buildCompactCacheJson(config);
+  int configJsonLength = 0;
+  configRuntime.saveCompactConfigCache(fountainConfig, config, configJsonLength);
 
   Serial.print("Compact config cache JSON length: ");
-  Serial.println(configJson.length());
-
-  if (configJson.length() > 0)
-  {
-    saveCachedConfigJsonIfChanged(configJson);
-  }
+  Serial.println(configJsonLength);
 
   return true;
 }
