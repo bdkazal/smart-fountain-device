@@ -12,10 +12,10 @@ The Laravel platform documentation uses `Docs/` in the Laravel repo. This firmwa
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Firmware module architecture and responsibility boundaries. |
 | [`SETUP_AND_FLASHING.md`](SETUP_AND_FLASHING.md) | Local setup, secrets, build, upload, and serial monitor workflow. |
 | [`HARDWARE_PINS.md`](HARDWARE_PINS.md) | GPIO pin map, hardware roles, and current hardware assumptions. |
-| [`API_AND_STATE_FLOW.md`](API_AND_STATE_FLOW.md) | Laravel API contract from the firmware point of view: config, commands, ACK, and state sync. |
+| [`API_AND_STATE_FLOW.md`](API_AND_STATE_FLOW.md) | Laravel config, dashboard/manual commands, firmware timeline execution, ACK, and state sync. |
 | [`OFFLINE_RECOVERY_AND_SAFETY.md`](OFFLINE_RECOVERY_AND_SAFETY.md) | API offline mode, local controls, recovery sync, water safety, and cache rules. |
-| [`DAILY_TIMELINE_OPERATION.md`](DAILY_TIMELINE_OPERATION.md) | How online Laravel schedule commands and offline cached timeline fallback are supposed to work. |
-| [`DAILY_TIMELINE_TESTING.md`](DAILY_TIMELINE_TESTING.md) | Real-device testing guide for daily timeline and schedule behavior. |
+| [`DAILY_TIMELINE_OPERATION.md`](DAILY_TIMELINE_OPERATION.md) | How ESP32 executes the daily timeline online/offline from Laravel config. |
+| [`DAILY_TIMELINE_TESTING.md`](DAILY_TIMELINE_TESTING.md) | Real-device testing guide for device-side daily timeline behavior. |
 | [`TESTING_CHECKLIST.md`](TESTING_CHECKLIST.md) | Smoke-test checklists before and after firmware changes. |
 
 ## Current stable firmware base
@@ -42,18 +42,22 @@ Verified on device:
 Main behavior still needing focused testing:
 
 ```text
-[ ] online Laravel daily timeline scene_apply command
-[ ] offline cached daily timeline range apply on real boundary time
-[ ] water-low behavior during scheduled scene/timeline apply
+[ ] ESP32 applies active daily_timeline range while online
+[ ] ESP32 does not re-apply the same range repeatedly
+[ ] ESP32 applies next range at a real boundary time
+[ ] ESP32 applies cached range while Laravel/API is offline
+[ ] ESP32 syncs final actual state after recovery
+[ ] water-low behavior during manual command and timeline apply
 ```
 
 ## Important rules
 
 ```text
 Smart Fountain = persistent state device
-Laravel online schedule = scene_apply command
-Firmware offline timeline = cached local fallback
+Laravel = configuration/dashboard/state recorder
+ESP32 = hardware executor + online/offline daily timeline executor
 Firmware safety must protect pump even without Laravel
+Laravel schedule command = compatibility/backstop test path only
 ```
 
 Do not start MQTT work until the daily timeline behavior is verified.
