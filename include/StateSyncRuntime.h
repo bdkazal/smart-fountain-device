@@ -26,7 +26,7 @@ public:
     int &statusCode
   );
 
-  void queueLocalStateSync();
+  void queueLocalStateSync(const char *source = "local_button");
   bool hasPendingLocalSync() const;
   bool shouldSyncLocalState(unsigned long now, unsigned long retryMs) const;
   bool syncLocalStateIfDue(
@@ -39,7 +39,16 @@ public:
   void markLocalStateSynced();
   void markLocalStateSyncFailed(unsigned long now);
 
+  void rememberOutputSource(const char *source);
+  const char *pendingOutputSource() const;
+  const char *currentOutputSource() const;
+
 private:
+  const char *normalizeSource(const char *source) const;
+
   bool localSyncPending = false;
   unsigned long localSyncRetryAt = 0;
+
+  const char *pendingSource = "local_button";
+  const char *currentSource = "device_state";
 };

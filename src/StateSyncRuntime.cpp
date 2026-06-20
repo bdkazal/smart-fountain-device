@@ -13,6 +13,8 @@ String StateSyncRuntime::buildStatePayload(
 {
   JsonDocument doc;
 
+  const char *resolvedSource = normalizeSource(source);
+
   doc["device_uuid"] = DEVICE_UUID;
   doc["device_type"] = "smart_fountain";
   doc["firmware_version"] = firmwareVersion;
@@ -22,18 +24,18 @@ String StateSyncRuntime::buildStatePayload(
 
   JsonObject pump = outputJson["pump"].to<JsonObject>();
   pump["enabled"] = outputs.pumpEnabled;
-  pump["source"] = readings.waterLow ? "water_safety" : source;
+  pump["source"] = readings.waterLow ? "water_safety" : resolvedSource;
 
   JsonObject cob = outputJson["cob_light"].to<JsonObject>();
   cob["enabled"] = outputs.cobEnabled;
-  cob["source"] = source;
+  cob["source"] = resolvedSource;
 
   JsonObject rgb = outputJson["rgb_light"].to<JsonObject>();
   rgb["enabled"] = outputs.rgbEnabled;
   rgb["brightness_percent"] = outputs.rgbBrightnessPercent;
   rgb["color"] = outputs.rgbColor;
   rgb["effect"] = outputs.rgbEffect;
-  rgb["source"] = source;
+  rgb["source"] = resolvedSource;
 
   JsonObject readingsJson = doc["readings"].to<JsonObject>();
 
@@ -68,11 +70,15 @@ bool StateSyncRuntime::postState(
   return httpDeviceApi.postState(payload, response, statusCode);
 }
 
-void StateSyncRuntime::queueLocalStateSync()
+void StateSyncRuntime::queueLocalStateSync(const char *source)
 {
+  pendingSource = normalizeSource(source);
+  rememberOutputSource(pendingSource);
+
   localSyncPending = true;
   localSyncRetryAt = 0;
-  Serial.println("Local output change queued for Laravel state sync.");
+
+  Serial.println("Output change queued for Laravel state sync.");
 }
 
 bool StateSyncRuntime::hasPendingLocalSync() const
@@ -134,7 +140,7 @@ bool StateSyncRuntime::syncLocalStateIfDue(
     return false;
   }
 
-  Serial.println("Syncing local button output change to Laravel...");
+  Serial.println("Syncing pending output state to Laravel...");
 
   if (postLocalState != nullptr && postLocalState())
   {
@@ -144,4 +150,24 @@ bool StateSyncRuntime::syncLocalStateIfDue(
 
   markLocalStateSyncFailed(now);
   return false;
+}
+
+void StateSyncRuntime::rememberOutputSource(const char *source)
+{
+  currentSource = normalizeSource(source);
+}
+
+const char *StateSyncRuntime::pendingOutputSource() const
+{
+  return pendingSource;
+}
+
+const char *StateSyncRuntime::currentOutputSource() const
+{
+  return currentSource;
+}
+
+const char *StateSyncRuntime::normalizeSource(const char *source) const
+{
+  return (source != nullptr && strlen(source) > 0) ? source : "device_state";
 }
