@@ -1,27 +1,42 @@
 # Daily Timeline Operation
 
-This document explains how Smart Fountain schedule/timeline behavior is supposed to work.
+This document explains the current Smart Fountain daily timeline design.
 
-## Important distinction
+## Architecture decision
 
-There are two different timeline paths.
+Smart Fountain daily timeline is a **24-hour mode timeline**, not a short-duration Laravel schedule.
 
-```text
-Online timeline = Laravel-owned schedule command
-Offline timeline = firmware-owned cached fallback
-```
-
-Do not mix these two behaviors.
-
-## Daily timeline model
-
-Smart Fountain V1 uses three daily ranges:
+The device normally has three persistent blocks:
 
 ```text
 Day
 Evening
 Night
 ```
+
+Each block applies a scene and keeps that scene active until the next block begins, unless a manual command, local button, safety rule, or recovery flow changes the outputs.
+
+The authority split is:
+
+```text
+Laravel = configuration owner, dashboard/API owner, audit/state recorder
+ESP32   = hardware executor, daily timeline executor, local safety authority
+```
+
+## Correct V1 execution model
+
+```text
+Dashboard/manual command = Laravel creates command, ESP32 applies it
+Daily recurring timeline = ESP32 applies locally from cached config
+Offline behavior         = ESP32 continues cached daily timeline
+Recovery behavior        = ESP32 reports final actual state after Laravel/API recovers
+```
+
+Laravel should not be treated as the primary production executor for the day/evening/night timeline.
+
+The ESP32 should evaluate and apply the daily timeline both while online and while offline.
+
+## Daily timeline model
 
 Example:
 
@@ -34,8 +49,10 @@ night    23:00 -> 06:00  scene: All Off
 Each range should include:
 
 ```text
+id
 period
 name
+is_enabled
 start_time
 end_time
 scene_id
@@ -43,7 +60,7 @@ scene_name
 outputs
 ```
 
-Outputs should include complete states for:
+Outputs should include complete V1 states for:
 
 ```text
 pump
@@ -51,49 +68,145 @@ cob_light
 rgb_light
 ```
 
-## Cross-midnight behavior
+V1 output shape:
 
-A range crosses midnight when:
+```json
+{
+  "pump": {
+    "enabled": true
+  },
+  "cob_light": {
+    "enabled": true
+  },
+  "rgb_light": {
+    "enabled": true,
+    "brightness_percent": 25,
+    "color": "#CD0404",
+    "effect": "slow_rainbow"
+  }
+}
+```
+
+## Config source
+
+Laravel `/api/device/config` is the source of configured timeline data.
+
+Firmware should use:
 
 ```text
-start_time > end_time
+server_time_utc
+config.timezone
+config.timezone_offset_minutes
+config.daily_timeline.enabled
+config.daily_timeline.repeat
+config.daily_timeline.ranges[]
+```
+
+Firmware should cache the compact config so the timeline can continue while Laravel/API is unavailable.
+
+## Time and clock rule
+
+```text
+RTC/device clock stores UTC.
+timezone_offset_minutes converts UTC to local schedule time.
+start_time/end_time are local wall-clock times.
+```
+
+`server_time_utc` from Laravel is the preferred sync source when config is reachable.
+
+## Active range detection
+
+For normal same-day ranges:
+
+```text
+active when local_time >= start_time AND local_time < end_time
+```
+
+For cross-midnight ranges:
+
+```text
+active when start_time > end_time
+active when local_time >= start_time OR local_time < end_time
 ```
 
 Example:
 
 ```text
-23:00 -> 06:00
+night 23:00 -> 06:00
+active from 23:00 to 23:59
+active from 00:00 to 05:59
+inactive from 06:00 onward
 ```
 
-Firmware treats that as active when:
+## Idempotency rule
+
+The ESP32 must not re-apply the same range repeatedly every loop.
+
+Use a local key similar to:
 
 ```text
-local_time >= 23:00 OR local_time < 06:00
+YYYY-MM-DD:range_id:start_time
 ```
+
+Example:
+
+```text
+2026-06-20:2:18:00
+```
+
+Firmware should store:
+
+```text
+last_applied_timeline_key
+```
+
+Then:
+
+```text
+if current_range_key != last_applied_timeline_key:
+    apply range scene
+    save current_range_key
+    queue/sync actual state when possible
+else:
+    do nothing
+```
+
+For a cross-midnight range, the key should use the local date that owns the active schedule occurrence. Keep this simple for V1, but make sure the range does not re-apply on every loop after midnight.
 
 ## Online timeline behavior
 
-When Laravel is online, schedule execution happens in Laravel.
-
-Flow:
+When Laravel/API is reachable:
 
 ```text
-Laravel scheduler runs every minute
-→ smart-fountain:check-schedules checks enabled schedule ranges
-→ current device-local time matches range start_time
-→ Laravel creates scene_apply command
-→ ESP32 polls command
-→ ESP32 ACKs acknowledged
-→ ESP32 applies scene outputs locally
-→ ESP32 ACKs executed or failed
-→ ESP32 POSTs actual state
+ESP32 fetches config
+ESP32 syncs clock from server_time_utc
+ESP32 evaluates current active range
+ESP32 applies the active range once if needed
+ESP32 posts actual state to Laravel
+ESP32 continues polling manual/dashboard commands
 ```
 
-The firmware does not create online schedule commands by itself.
+Dashboard/manual commands can still override outputs. After any manual command, the next timeline transition may apply the next range.
 
-## Laravel manual schedule command
+## Offline timeline behavior
 
-Current Laravel command:
+When Laravel/API is unavailable:
+
+```text
+compact daily_timeline cache already exists
+DeviceClock has valid time
+API/cloud becomes unavailable
+ESP32 evaluates current local time
+active cached range is detected
+cached range outputs are applied once if needed
+state sync is queued
+Laravel/API recovers
+ESP32 fetches config and syncs final actual state
+```
+
+## Laravel schedule command role
+
+Laravel still has a compatibility/backstop command:
 
 ```bash
 php artisan smart-fountain:check-schedules --time=18:00
@@ -106,136 +219,70 @@ Current command supports --time only.
 There is no --day option currently.
 ```
 
-The time must exactly match a range `start_time`.
+This command may create a `scene_apply` command during testing/migration, and firmware should still support that command type.
 
-## Laravel online command creation conditions
+But this command is no longer the preferred production timeline authority.
 
-Laravel creates a scheduled command only if:
+## scene_apply compatibility
 
-```text
-device exists
-device type is smart_fountain
-device status is active
-schedule range is enabled
-period_key is day/evening/night
-current time exactly equals start_time
-range was not already started today
-device is recently online
-range has start scene
-scene has valid output states
-```
+Firmware should continue supporting schedule-created `scene_apply` commands.
 
-Current Laravel online check is based on recent `last_seen_at`.
-
-If the device is not recently online, Laravel skips command creation.
-
-## Schedule-created command payload
-
-Online schedule uses the normal `scene_apply` command type.
-
-Payload includes schedule metadata:
+Example metadata:
 
 ```json
 {
-  "scene_id": 1,
-  "scene_name": "Night Glow",
   "source": "schedule:5:evening",
   "schedule_range_id": 5,
   "schedule_name": "Evening",
   "schedule_period": "evening",
   "schedule_phase": "start",
-  "repeat": "daily",
-  "outputs": {
-    "pump": {
-      "enabled": true,
-      "speed_percent": 100
-    },
-    "cob_light": {
-      "enabled": true,
-      "brightness_percent": 100
-    },
-    "rgb_light": {
-      "enabled": true,
-      "brightness_percent": 25,
-      "color": "#CD0404",
-      "effect": "slow_rainbow"
-    }
-  }
+  "repeat": "daily"
 }
 ```
 
-## Offline timeline behavior
+This keeps the old path testable while the device-side timeline executor becomes the main path.
 
-When Laravel/API is unavailable, firmware can use cached daily timeline data.
+## Water-low safety
 
-Flow:
+Water-low safety must be enforced locally by firmware.
 
-```text
-Laravel config was fetched successfully earlier
-→ compact daily_timeline cache exists in ESP32 flash
-→ DeviceClock has valid time
-→ API/cloud becomes unavailable
-→ OfflineTimeline checks current local time
-→ active cached range is detected
-→ cached range outputs are applied locally if needed
-→ local state sync is queued
-→ after Laravel recovery, final actual state syncs
-```
-
-## Why offline timeline does not apply while online
-
-When Laravel is reachable, dashboard/API commands are the active source of truth.
-
-If firmware applied cached timeline while online, it could fight dashboard commands.
-
-So the rule is:
+If `water_low=true`:
 
 ```text
-Online: detect active range but do not apply cached outputs.
-Offline: cached timeline may apply range outputs locally.
+pump must be forced OFF immediately
+pump ON from manual commands must be ignored/blocked
+pump ON from timeline scenes must be ignored/blocked
+COB/RGB may still apply
+state sync must report pump OFF and water_low=1
 ```
 
-## Current firmware OfflineTimeline behavior
+Laravel may also protect command payloads, but firmware must never depend only on Laravel for physical pump safety.
 
-`OfflineTimeline.update()`:
+## State sync after timeline apply
+
+After a timeline range changes actual outputs, firmware should send `/api/device/state` when possible.
+
+Common source labels:
 
 ```text
-detects active range
-logs range changes
-safe to run while online
-no output changes
+device_timeline
+offline_timeline
+water_safety
 ```
 
-`OfflineTimeline.applyActiveRangeIfNeeded()`:
+Use `device_timeline` for normal online timeline application if implemented. Existing code may still use `offline_timeline` for cached/offline application until the source naming is refactored.
+
+## Main behavior to verify next
 
 ```text
-checks active range
-applies only if not already applied
-uses FountainOutputs safe output path
-honors water-low pump protection
+[ ] Config contains daily_timeline ranges with outputs
+[ ] ESP32 applies active range while online
+[ ] ESP32 does not re-apply the same range repeatedly
+[ ] ESP32 applies next range at an online boundary
+[ ] ESP32 applies cached range while Laravel/API is offline
+[ ] ESP32 syncs final actual state after recovery
+[ ] Cross-midnight range behaves correctly
+[ ] Water-low safety blocks pump during manual command and timeline execution
 ```
 
-## Timeline and recovery
-
-If offline timeline changes outputs while Laravel is down:
-
-```text
-outputs change locally
-state sync is queued
-Laravel recovers
-firmware probes config endpoint
-firmware syncs final actual output state
-```
-
-## Main behavior not yet fully verified
-
-Needs real-device verification:
-
-```text
-[ ] Laravel manual schedule command creates scene_apply
-[ ] ESP32 receives and applies schedule-created scene_apply
-[ ] Real every-minute Laravel scheduler triggers command at start_time
-[ ] OfflineTimeline applies cached range at actual boundary while Laravel is down
-[ ] Cross-midnight range behaves correctly on device
-[ ] Water-low safety blocks pump during scheduled scene/offline range
-```
+Do not start MQTT yet.
