@@ -8,7 +8,7 @@ This repository contains the device-side runtime for the Smart Fountain. The bac
 bdkazal/biztola-iot-platform
 ```
 
-The Smart Fountain is a **persistent state device**. Outputs stay in their last applied state until another command, schedule, local button, safety rule, or recovery flow changes them.
+The Smart Fountain is a **persistent state device**. Outputs stay in their last applied state until another command, daily timeline range, local button, safety rule, or recovery flow changes them.
 
 ## Documentation
 
@@ -20,10 +20,10 @@ Full documentation is kept in [`docs/`](docs/).
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Firmware module architecture and responsibility boundaries. |
 | [`docs/SETUP_AND_FLASHING.md`](docs/SETUP_AND_FLASHING.md) | Setup, secrets, build, upload, and monitor workflow. |
 | [`docs/HARDWARE_PINS.md`](docs/HARDWARE_PINS.md) | GPIO pin map and hardware assumptions. |
-| [`docs/API_AND_STATE_FLOW.md`](docs/API_AND_STATE_FLOW.md) | Laravel config, commands, ACK, state sync, and payload rules. |
+| [`docs/API_AND_STATE_FLOW.md`](docs/API_AND_STATE_FLOW.md) | Laravel config, dashboard/manual commands, firmware timeline execution, ACK, and state sync. |
 | [`docs/OFFLINE_RECOVERY_AND_SAFETY.md`](docs/OFFLINE_RECOVERY_AND_SAFETY.md) | Offline mode, local controls, recovery sync, config cache, and water safety. |
-| [`docs/DAILY_TIMELINE_OPERATION.md`](docs/DAILY_TIMELINE_OPERATION.md) | Online Laravel schedule vs offline cached timeline behavior. |
-| [`docs/DAILY_TIMELINE_TESTING.md`](docs/DAILY_TIMELINE_TESTING.md) | Real-device schedule/timeline test guide. |
+| [`docs/DAILY_TIMELINE_OPERATION.md`](docs/DAILY_TIMELINE_OPERATION.md) | ESP32 online/offline daily timeline execution from cached Laravel config. |
+| [`docs/DAILY_TIMELINE_TESTING.md`](docs/DAILY_TIMELINE_TESTING.md) | Real-device daily timeline test guide. |
 | [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | Firmware smoke-test checklist. |
 
 Note: the Laravel repository uses uppercase `Docs/`. This firmware repository uses lowercase `docs/`.
@@ -61,10 +61,12 @@ Verified on real ESP32 hardware:
 Focused behavior still needing real-device verification:
 
 ```text
-[ ] Laravel online daily timeline creates scene_apply at range start time
-[ ] ESP32 applies scheduled scene_apply command and syncs actual state
-[ ] ESP32 offline cached timeline applies range outputs at real boundary time
-[ ] water-low safety still protects pump during scheduled/offline timeline apply
+[ ] ESP32 applies active daily_timeline range while online
+[ ] ESP32 does not re-apply the same range repeatedly
+[ ] ESP32 applies next range at a real boundary time
+[ ] ESP32 applies cached daily_timeline range while Laravel/API is offline
+[ ] ESP32 syncs final actual state after Laravel/API recovery
+[ ] water-low safety still protects pump during manual command and timeline apply
 ```
 
 ## Quick setup
@@ -130,7 +132,7 @@ Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
 
 ### Online mode
 
-Laravel is reachable and controls live dashboard/API behavior.
+Laravel is reachable and provides config, dashboard/manual commands, and state recording.
 
 ```text
 Dashboard command -> Laravel pending command -> ESP32 poll -> ACK acknowledged -> apply locally -> ACK executed -> POST actual state
@@ -138,20 +140,23 @@ Dashboard command -> Laravel pending command -> ESP32 poll -> ACK acknowledged -
 
 ### Offline/API-unavailable mode
 
-Firmware keeps local control and safety active.
+Firmware keeps local control, timeline, and safety active.
 
 ```text
-API failures -> server-offline mode -> local buttons still work -> local state queued -> recovery probe -> final actual state syncs to Laravel
+API failures -> server-offline mode -> local buttons/timeline still work -> local state queued -> recovery probe -> final actual state syncs to Laravel
 ```
 
 ### Daily timeline
 
-There are two separate timeline paths:
+There is one preferred timeline executor:
 
 ```text
-Online schedule: Laravel creates scene_apply command.
-Offline fallback: ESP32 applies cached daily_timeline range locally.
+Laravel configures daily_timeline.
+ESP32 executes daily_timeline locally while online and offline.
+Laravel stores final actual state after ESP32 syncs.
 ```
+
+The Laravel schedule command may still be used as a compatibility/backstop/manual test path, but it is not the preferred production timeline engine.
 
 See:
 
@@ -159,7 +164,3 @@ See:
 docs/DAILY_TIMELINE_OPERATION.md
 docs/DAILY_TIMELINE_TESTING.md
 ```
-
-## Do not work on MQTT yet
-
-MQTT is future work. Current priority is verifying Smart Fountain daily timeline/schedule operation first.
