@@ -26,3 +26,44 @@ bool ConfigRuntime::parseConfigResponse(
 
   return true;
 }
+
+bool ConfigRuntime::fetchConfig(
+  HttpDeviceApi &httpDeviceApi,
+  JsonDocument &doc,
+  JsonObject &config,
+  String &response,
+  int &statusCode,
+  String &serverTimeUtc,
+  String &deviceType,
+  int &timezoneOffsetMinutes,
+  bool &parseOk
+)
+{
+  response = "";
+  statusCode = -1;
+  serverTimeUtc = "";
+  deviceType = "";
+  timezoneOffsetMinutes = 0;
+  parseOk = false;
+
+  bool ok = httpDeviceApi.getConfig(response, statusCode);
+
+  if (!ok)
+  {
+    Serial.print("Config HTTP status: ");
+    Serial.println(statusCode);
+    Serial.println(response);
+    return false;
+  }
+
+  parseOk = parseConfigResponse(
+    response,
+    doc,
+    config,
+    serverTimeUtc,
+    deviceType,
+    timezoneOffsetMinutes
+  );
+
+  return parseOk;
+}

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include "HttpDeviceApi.h"
 
 class ConfigRuntime
 {
@@ -13,5 +14,17 @@ public:
     String &serverTimeUtc,
     String &deviceType,
     int &timezoneOffsetMinutes
+  );
+
+  bool fetchConfig(
+    HttpDeviceApi &httpDeviceApi,
+    JsonDocument &doc,
+    JsonObject &config,
+    String &response,
+    int &statusCode,
+    String &serverTimeUtc,
+    String &deviceType,
+    int &timezoneOffsetMinutes,
+    bool &parseOk
   );
 };
