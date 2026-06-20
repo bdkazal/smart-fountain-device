@@ -67,3 +67,41 @@ bool StateSyncRuntime::postState(
 
   return httpDeviceApi.postState(payload, response, statusCode);
 }
+
+void StateSyncRuntime::queueLocalStateSync()
+{
+  localSyncPending = true;
+  localSyncRetryAt = 0;
+  Serial.println("Local output change queued for Laravel state sync.");
+}
+
+bool StateSyncRuntime::hasPendingLocalSync() const
+{
+  return localSyncPending;
+}
+
+bool StateSyncRuntime::shouldSyncLocalState(unsigned long now, unsigned long retryMs) const
+{
+  if (!localSyncPending)
+  {
+    return false;
+  }
+
+  if (localSyncRetryAt != 0 && now - localSyncRetryAt < retryMs)
+  {
+    return false;
+  }
+
+  return true;
+}
+
+void StateSyncRuntime::markLocalStateSynced()
+{
+  localSyncPending = false;
+  localSyncRetryAt = 0;
+}
+
+void StateSyncRuntime::markLocalStateSyncFailed(unsigned long now)
+{
+  localSyncRetryAt = now;
+}

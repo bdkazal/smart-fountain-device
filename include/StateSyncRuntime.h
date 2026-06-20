@@ -23,4 +23,14 @@ public:
     String &response,
     int &statusCode
   );
+
+  void queueLocalStateSync();
+  bool hasPendingLocalSync() const;
+  bool shouldSyncLocalState(unsigned long now, unsigned long retryMs) const;
+  void markLocalStateSynced();
+  void markLocalStateSyncFailed(unsigned long now);
+
+private:
+  bool localSyncPending = false;
+  unsigned long localSyncRetryAt = 0;
 };

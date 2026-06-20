@@ -70,11 +70,9 @@ unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
-unsigned long localStateSyncRetryAt = 0;
 
 ApiHealth apiHealth;
 bool outputStateTrusted = false;
-bool localStateSyncPending = false;
 String serverTimeUtc = "";
 String deviceType = "";
 CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
@@ -161,9 +159,7 @@ void applySafetyAndSyncHardware()
 void queueLocalStateSync(const char *reason)
 {
   markOutputStateTrusted(reason);
-  localStateSyncPending = true;
-  localStateSyncRetryAt = 0;
-  Serial.println("Local output change queued for Laravel state sync.");
+  stateSyncRuntime.queueLocalStateSync();
 }
 
 bool processLocalControls()
@@ -579,7 +575,7 @@ bool postState(const char *source = "device_state")
 
 bool syncLocalStateIfDue(unsigned long now)
 {
-  if (!localStateSyncPending)
+  if (!stateSyncRuntime.hasPendingLocalSync())
   {
     return false;
   }
@@ -594,7 +590,7 @@ bool syncLocalStateIfDue(unsigned long now)
     return false;
   }
 
-  if (localStateSyncRetryAt != 0 && now - localStateSyncRetryAt < LOCAL_STATE_SYNC_RETRY_MS)
+  if (!stateSyncRuntime.shouldSyncLocalState(now, LOCAL_STATE_SYNC_RETRY_MS))
   {
     return false;
   }
@@ -603,13 +599,12 @@ bool syncLocalStateIfDue(unsigned long now)
 
   if (postState("local_button"))
   {
-    localStateSyncPending = false;
-    localStateSyncRetryAt = 0;
+    stateSyncRuntime.markLocalStateSynced();
     lastStateSyncAt = now;
     return true;
   }
 
-  localStateSyncRetryAt = now;
+  stateSyncRuntime.markLocalStateSyncFailed(now);
   return false;
 }
 
@@ -912,7 +907,7 @@ void FountainApp::update()
     {
       apiHealth.markProbeAttempt(now);
 
-      if (localStateSyncPending)
+      if (stateSyncRuntime.hasPendingLocalSync())
       {
         Serial.println("API offline mode: probing Laravel before local state sync...");
 
