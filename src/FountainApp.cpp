@@ -6,6 +6,7 @@
 #include "ApiClient.h"
 #include "ApiHealth.h"
 #include "CommandRuntime.h"
+#include "CommandFlowRuntime.h"
 #include "CloudRuntime.h"
 #include "ConfigCache.h"
 #include "ConfigRuntime.h"
@@ -72,7 +73,6 @@ unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
-unsigned long lastNoCommandLogAt = 0;
 unsigned long lastTimelineEvaluateAt = 0;
 
 ApiHealth apiHealth;
@@ -84,6 +84,7 @@ String deviceType = "";
 ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
 CommandRuntime commandRuntime;
+CommandFlowRuntime commandFlowRuntime;
 DeviceClock deviceClock;
 ConfigRuntime configRuntime;
 DailyTimelineRuntime dailyTimelineRuntime;
@@ -493,124 +494,6 @@ bool syncLocalStateIfDue(unsigned long now)
   return synced;
 }
 
-bool ackCommand(int commandId, const char *status, const char *message = nullptr)
-{
-  if (!isWifiConnected())
-  {
-    Serial.println("Command ACK skipped: Wi-Fi offline.");
-    return false;
-  }
-
-  String response;
-  int statusCode;
-
-  commandRuntime.ackCommand(
-    httpDeviceApi,
-    commandId,
-    status,
-    message,
-    response,
-    statusCode
-  );
-
-  if (statusCode < 200 || statusCode >= 300)
-  {
-    Serial.println(response);
-    registerApiFailure("ack", statusCode);
-    return false;
-  }
-
-  registerApiSuccess("ack");
-  return true;
-}
-
-bool handleOutputSet(JsonObject payload)
-{
-  updateWaterReadings();
-
-  bool applied = commandRuntime.handleOutputSet(
-    payload,
-    fountainOutputs,
-    outputs,
-    readings
-  );
-
-  applySafetyAndSyncHardware();
-  return applied;
-}
-
-bool handleSceneApply(JsonObject payload)
-{
-  updateWaterReadings();
-
-  bool allApplied = commandRuntime.handleSceneApply(
-    payload,
-    fountainOutputs,
-    outputs,
-    readings
-  );
-
-  applySafetyAndSyncHardware();
-  return allApplied;
-}
-
-void processCommand(JsonObject command)
-{
-  int commandId = command["id"] | 0;
-  const char *commandType = command["command_type"] | "";
-  JsonObject payload = command["payload"].as<JsonObject>();
-
-  if (commandId <= 0 || strlen(commandType) == 0)
-  {
-    Serial.println("Invalid command shape. Ignoring.");
-    return;
-  }
-
-  Serial.println();
-  Serial.print("Processing command #");
-  Serial.print(commandId);
-  Serial.print(" type=");
-  Serial.println(commandType);
-
-  ackCommand(commandId, "acknowledged");
-
-  bool applied = false;
-  String type = commandType;
-
-  if (type == "output_set")
-  {
-    applied = handleOutputSet(payload);
-  }
-  else if (type == "scene_apply")
-  {
-    applied = handleSceneApply(payload);
-  }
-  else
-  {
-    ackCommand(commandId, "failed", "Unsupported command type.");
-    return;
-  }
-
-  if (applied)
-  {
-    dailyTimelineRuntime.markCurrentRangeSatisfied(
-      dailyTimeline,
-      deviceClock,
-      "cloud command applied"
-    );
-
-    markOutputStateTrusted("cloud command applied");
-    stateSyncRuntime.rememberOutputSource("device_state");
-    ackCommand(commandId, "executed");
-  }
-  else
-  {
-    ackCommand(commandId, "failed", "Command could not be applied safely.");
-  }
-
-  postState("device_state");
-}
-
 bool processDailyTimeline()
 {
   updateWaterReadings();
@@ -639,68 +522,29 @@ bool processDailyTimeline()
 
 bool pollCommands()
 {
-  if (!isWifiConnected())
-  {
-    Serial.println("Command poll skipped: Wi-Fi offline.");
-    return false;
-  }
-
-  if (apiHealth.isServerOffline())
-  {
-    return false;
-  }
-
-  JsonDocument doc;
-  String response;
-  int statusCode;
-  bool parseOk = false;
-
-  bool fetched = commandRuntime.fetchCommand(
+  return commandFlowRuntime.pollAndProcess(
+    millis(),
+    NO_COMMAND_LOG_INTERVAL_MS,
+    isWifiConnected(),
+    apiHealth.isServerOffline(),
     httpDeviceApi,
-    doc,
-    response,
-    statusCode,
-    parseOk
+    commandRuntime,
+    fountainOutputs,
+    dailyTimelineRuntime,
+    deviceClock,
+    dailyTimeline,
+    outputs,
+    readings,
+    stateSyncRuntime,
+    registerApiSuccess,
+    registerApiFailure,
+    updateWaterReadings,
+    applySafetyAndSyncHardware,
+    markOutputStateTrusted,
+    postState
   );
-
-  if (statusCode < 200 || statusCode >= 300)
-  {
-    registerApiFailure("commands", statusCode);
-    return false;
-  }
-
-  registerApiSuccess("commands");
-
-  if (!fetched || !parseOk)
-  {
-    registerApiFailure("commands_parse", statusCode);
-    return false;
-  }
-
-  JsonObject command = doc["command"].as<JsonObject>();
-
-  if (command.isNull())
-  {
-    unsigned long now = millis();
-
-    if (now - lastNoCommandLogAt >= NO_COMMAND_LOG_INTERVAL_MS)
-    {
-      Serial.println("No pending command.");
-      lastNoCommandLogAt = now;
-    }
-
-    return false;
-  }
-
-  Serial.println();
-  Serial.print("GET ");
-  Serial.println(httpDeviceApi.commandsUrl());
-  Serial.print("Command HTTP status: ");
-  Serial.println(statusCode);
-
-  processCommand(command);
-  return true;
 }
+
 
 void FountainApp::begin()
 {
