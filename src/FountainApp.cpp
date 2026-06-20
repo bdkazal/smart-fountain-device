@@ -22,6 +22,7 @@
 #include "StateSyncRuntime.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
+#include "WifiRuntime.h"
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
@@ -98,6 +99,7 @@ HardwareOutputs hardwareOutputs;
 LocalControls localControls;
 LocalRuntime localRuntime;
 StateSyncRuntime stateSyncRuntime;
+WifiRuntime wifiRuntime;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
@@ -111,7 +113,7 @@ bool probeApiRecovery();
 
 bool isWifiConnected()
 {
-  return WiFi.status() == WL_CONNECTED;
+  return wifiRuntime.isConnected();
 }
 
 bool isOfflineControlMode()
@@ -265,82 +267,27 @@ bool loadCachedConfigIfAvailable()
   return true;
 }
 
+void serviceRuntimeDuringWifiConnect()
+{
+  processLocalControls();
+  applySafetyAndSyncHardware();
+}
+
 bool connectWithCredentials(const String &ssid, const String &password)
 {
-  if (ssid.length() == 0)
-  {
-    Serial.println("Cannot connect to Wi-Fi: SSID is empty.");
-    return false;
-  }
-
-  Serial.println();
-  Serial.println("Connecting Wi-Fi...");
-  Serial.print("SSID: ");
-  Serial.println(ssid);
-
-  WiFi.mode(WIFI_STA);
-  WiFi.setTxPower(WIFI_POWER_8_5dBm);
-  WiFi.begin(ssid.c_str(), password.c_str());
-
-  unsigned long startedAt = millis();
-
-  while (!isWifiConnected() && millis() - startedAt < 15000)
-  {
-    processLocalControls();
-    applySafetyAndSyncHardware();
-    delay(100);
-    Serial.print(".");
-  }
-
-  Serial.println();
-
-  if (isWifiConnected())
-  {
-    Serial.print("Wi-Fi connected. IP: ");
-    Serial.println(WiFi.localIP());
-    Serial.print("RSSI dBm: ");
-    Serial.println(WiFi.RSSI());
-    return true;
-  }
-
-  Serial.println("Wi-Fi connection failed.");
-  return false;
+  return wifiRuntime.connectWithCredentials(
+    ssid,
+    password,
+    serviceRuntimeDuringWifiConnect
+  );
 }
 
 bool connectWifi(bool allowDevelopmentFallback)
 {
-  StoredDeviceConfig storedConfig = loadStoredDeviceConfig();
-
-  if (storedConfig.hasWifiCredentials)
-  {
-    Serial.println("Trying stored Wi-Fi credentials...");
-
-    if (connectWithCredentials(storedConfig.wifiSsid, storedConfig.wifiPassword))
-    {
-      return true;
-    }
-
-    Serial.println("Stored Wi-Fi failed.");
-  }
-  else
-  {
-    Serial.println("No stored Wi-Fi credentials found.");
-  }
-
-  if (allowDevelopmentFallback)
-  {
-    Serial.println("Trying DeviceSecrets Wi-Fi as development fallback...");
-
-    if (connectWithCredentials(WIFI_SSID, WIFI_PASSWORD))
-    {
-      return true;
-    }
-
-    Serial.println("DeviceSecrets Wi-Fi failed.");
-  }
-
-  Serial.println("Wi-Fi unavailable. Will retry later. Setup hotspot starts only after GPIO33 Wi-Fi reset.");
-  return false;
+  return wifiRuntime.connect(
+    allowDevelopmentFallback,
+    serviceRuntimeDuringWifiConnect
+  );
 }
 
 bool shouldCountApiFailureForOffline(const char *requestName)
