@@ -46,3 +46,24 @@ String StateSyncRuntime::buildStatePayload(
 
   return payload;
 }
+
+bool StateSyncRuntime::postState(
+  HttpDeviceApi &httpDeviceApi,
+  const char *source,
+  const FountainOutputState &outputs,
+  const FountainReadings &readings,
+  const char *firmwareVersion,
+  String &response,
+  int &statusCode
+)
+{
+  String payload = buildStatePayload(source, outputs, readings, firmwareVersion);
+
+  Serial.println();
+  Serial.print("POST ");
+  Serial.println(httpDeviceApi.stateUrl());
+  Serial.print("State payload: ");
+  Serial.println(payload);
+
+  return httpDeviceApi.postState(payload, response, statusCode);
+}

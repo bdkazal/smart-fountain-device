@@ -549,17 +549,18 @@ bool postState(const char *source = "device_state")
   updateWaterReadings();
   enforceWaterSafety();
 
-  String payload = stateSyncRuntime.buildStatePayload(source, outputs, readings, FIRMWARE_VERSION);
   String response;
   int statusCode;
 
-  Serial.println();
-  Serial.print("POST ");
-  Serial.println(httpDeviceApi.stateUrl());
-  Serial.print("State payload: ");
-  Serial.println(payload);
-
-  httpDeviceApi.postState(payload, response, statusCode);
+  stateSyncRuntime.postState(
+    httpDeviceApi,
+    source,
+    outputs,
+    readings,
+    FIRMWARE_VERSION,
+    response,
+    statusCode
+  );
 
   Serial.print("State HTTP status: ");
   Serial.println(statusCode);
