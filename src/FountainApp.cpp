@@ -80,8 +80,6 @@ CloudRuntime cloudRuntime;
 bool outputStateTrusted = false;
 String serverTimeUtc = "";
 String deviceType = "";
-const char *pendingStateSyncSource = "local_button";
-const char *currentOutputStateSource = "device_state";
 
 ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
@@ -167,23 +165,10 @@ void applySafetyAndSyncHardware()
   syncHardwareOutputs();
 }
 
-void setCurrentOutputStateSource(const char *source)
-{
-  currentOutputStateSource = (source != nullptr && strlen(source) > 0) ? source : "device_state";
-}
-
 void queueOutputStateSync(const char *reason, const char *source)
 {
   markOutputStateTrusted(reason);
-
-  const char *resolvedSource = (source != nullptr && strlen(source) > 0)
-    ? source
-    : "device_state";
-
-  pendingStateSyncSource = resolvedSource;
-  setCurrentOutputStateSource(resolvedSource);
-
-  stateSyncRuntime.queueLocalStateSync();
+  stateSyncRuntime.queueLocalStateSync(source);
 }
 
 void queueLocalStateSync(const char *reason)
@@ -487,7 +472,7 @@ bool postState(const char *source = "device_state")
 
 bool postPendingOutputState()
 {
-  return postState(pendingStateSyncSource);
+  return postState(stateSyncRuntime.pendingOutputSource());
 }
 
 bool syncLocalStateIfDue(unsigned long now)
@@ -615,7 +600,7 @@ void processCommand(JsonObject command)
     );
 
     markOutputStateTrusted("cloud command applied");
-    setCurrentOutputStateSource("device_state");
+    stateSyncRuntime.rememberOutputSource("device_state");
     ackCommand(commandId, "executed");
   }
   else
@@ -877,7 +862,7 @@ void FountainApp::update()
 
   if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
   {
-    postState(currentOutputStateSource);
+    postState(stateSyncRuntime.currentOutputSource());
     logCloudModeIfChanged();
     lastStateSyncAt = now;
   }
