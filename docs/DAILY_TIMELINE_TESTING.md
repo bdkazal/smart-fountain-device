@@ -2,16 +2,16 @@
 
 This document explains how to test Smart Fountain daily timeline behavior on real ESP32 hardware.
 
-## Test paths
+## Current test goal
 
-There are two paths to test:
+Smart Fountain daily timeline is now tested as a device-side executor:
 
 ```text
-1. Online Laravel schedule command path
-2. Offline cached firmware timeline fallback path
+Laravel = config/dashboard/state recorder
+ESP32   = online/offline timeline executor + hardware safety authority
 ```
 
-Run them separately.
+The old Laravel `smart-fountain:check-schedules` command still exists, but it is a development/backstop/manual compatibility path, not the preferred production timeline engine.
 
 ## Preconditions
 
@@ -26,6 +26,7 @@ Serial monitor is open
 Daily timeline ranges exist in Laravel
 Each range has a start scene
 Each scene has complete pump/COB/RGB output states
+ESP32 has valid clock data from Laravel server_time_utc or RTC
 ```
 
 ## Confirm config contains daily timeline
@@ -48,89 +49,81 @@ Timeline range count: 3
 
 If `outputs: no` appears, fix the Laravel scene/range data first.
 
-## Test 1: Manual Laravel online schedule command
+## Test 1: ESP32 applies active range while online
 
-In the Laravel repo, run the schedule command manually.
-
-Example:
-
-```bash
-php artisan smart-fountain:check-schedules --time=18:00
-```
-
-Important:
+Goal:
 
 ```text
-Use a time that exactly matches an enabled daily timeline range start_time.
-The current command supports --time only.
-There is no --day option currently.
-```
-
-Expected Laravel output:
-
-```text
-Created 1 Smart Fountain daily timeline command(s).
+ESP32 fetches Laravel config
+ESP32 syncs clock
+ESP32 determines active local range
+ESP32 applies the active range locally
+ESP32 sends actual state to Laravel
 ```
 
 Expected ESP32 output:
 
 ```text
-GET /api/device/commands
-Command HTTP status: 200
-
-Processing command #... type=scene_apply
-ACK command ... as acknowledged
-ACK HTTP status: 200
+DailyTimeline active range: ...
+DailyTimeline applying range: ...
 ... outputs applied ...
-ACK command ... as executed
-ACK HTTP status: 200
-
 POST /api/device/state
 State HTTP status: 200
 State synced.
 ```
 
-## If Laravel creates 0 commands
-
-Check:
+Expected Laravel result:
 
 ```text
-device status is active
-device last_seen_at is fresh
-timeline range is enabled
-time exactly matches start_time
-period_key is day, evening, or night
-range has start_scene_id
-scene has valid outputs
-range was not already started today
+platform output states match ESP32 actual state
+last_seen_at updates
+water_low reading updates if present
 ```
 
-For same-day retesting, Laravel may skip the range because `last_started_on` already equals today. Use another range/time or reset the schedule range started fields during development.
+## Test 2: Idempotency protection
 
-## Test 2: Real scheduler minute test
+The same active range should not be re-applied on every loop.
 
-Set one timeline range start time a few minutes ahead.
-
-Run Laravel scheduler worker:
-
-```bash
-php artisan schedule:work
-```
-
-Keep ESP32 serial monitor open.
-
-Expected flow:
+Expected behavior after first apply:
 
 ```text
-Laravel scheduler runs smart-fountain:check-schedules every minute
-Laravel creates pending scene_apply command
-ESP32 polls command
-ESP32 applies scene
-ESP32 ACKs executed
-ESP32 POSTs state
+DailyTimeline active range unchanged; already applied.
 ```
 
-## Test 3: Offline cached timeline fallback
+or equivalent.
+
+Recommended key:
+
+```text
+YYYY-MM-DD:range_id:start_time
+```
+
+Example:
+
+```text
+2026-06-20:2:18:00
+```
+
+## Test 3: Online boundary transition
+
+1. Keep Laravel running.
+2. Set a timeline range boundary a few minutes ahead.
+3. Make sure ESP32 fetches the latest config.
+4. Keep ESP32 serial monitor open.
+5. Wait for local device time to cross the boundary.
+
+Expected:
+
+```text
+ESP32 detects new active range
+ESP32 applies new range scene locally
+ESP32 sends /api/device/state
+Laravel output states update from actual device state
+```
+
+This test should not depend on Laravel creating a `scene_apply` command.
+
+## Test 4: Offline cached timeline execution
 
 1. Start Laravel.
 2. Boot ESP32.
@@ -142,7 +135,7 @@ ESP32 POSTs state
 8. Stop Laravel.
 9. Wait for API offline mode.
 10. Wait for range boundary.
-11. Confirm OfflineTimeline applies cached outputs.
+11. Confirm ESP32 applies cached outputs.
 12. Restart Laravel.
 13. Confirm final actual state syncs.
 
@@ -150,9 +143,9 @@ Expected offline logs:
 
 ```text
 Cloud mode: OFFLINE - API unavailable...
-OfflineTimeline active range: ...
-OfflineTimeline applying cached range: ...
-... state applied from offline_timeline ...
+DailyTimeline active range: ...
+DailyTimeline applying cached range: ...
+... state applied from offline_timeline or device_timeline ...
 Local output change queued for Laravel state sync.
 ```
 
@@ -163,15 +156,14 @@ API offline mode: probing Laravel before local state sync...
 Config HTTP status: 200
 API recovered. request=config_probe
 Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
-Syncing local button output change to Laravel...
 POST /api/device/state
 State HTTP status: 200
 State synced.
 ```
 
-The log may still say `local button output change` for queued local sync. The important behavior is that final actual outputs sync to Laravel after recovery.
+The important behavior is that final actual outputs sync to Laravel after recovery.
 
-## Test 4: Cross-midnight range
+## Test 5: Cross-midnight range
 
 Use a range like:
 
@@ -193,11 +185,13 @@ Firmware rule:
 active when local_time >= start_time OR local_time < end_time
 ```
 
-## Test 5: Water-low safety during schedule
+Confirm the idempotency key does not cause repeated re-apply every loop after midnight.
+
+## Test 6: Water-low safety during timeline execution
 
 Force/simulate `water_low=true`.
 
-Then apply a scheduled scene that tries to turn pump ON.
+Then let a timeline range apply a scene that would normally turn pump ON.
 
 Expected result:
 
@@ -206,7 +200,68 @@ pump remains OFF
 COB/RGB may still apply
 state sync reports pump OFF
 water_low reading is reported
+source may include water_safety for pump
 ```
+
+## Test 7: Manual Laravel command compatibility
+
+This is a compatibility/backstop test only.
+
+In the Laravel repo, run the schedule command manually:
+
+```bash
+php artisan smart-fountain:check-schedules --time=18:00
+```
+
+Important:
+
+```text
+Use a time that exactly matches an enabled daily timeline range start_time.
+The current command supports --time only.
+There is no --day option currently.
+```
+
+Possible Laravel output:
+
+```text
+Created 1 Smart Fountain daily timeline command(s).
+```
+
+If a command is created, expected ESP32 output:
+
+```text
+GET /api/device/commands
+Command HTTP status: 200
+Processing command #... type=scene_apply
+ACK command ... as acknowledged
+ACK HTTP status: 200
+... outputs applied ...
+ACK command ... as executed
+ACK HTTP status: 200
+POST /api/device/state
+State HTTP status: 200
+State synced.
+```
+
+## If Laravel manual command creates 0 commands
+
+This only applies to the backstop/manual command path.
+
+Check:
+
+```text
+device status is active
+device last_seen_at is fresh
+timeline range is enabled
+time exactly matches start_time
+period_key is day, evening, or night
+range has start_scene_id
+scene has valid outputs
+range was not already started today
+no pending/acknowledged command exists for that range
+```
+
+For same-day retesting, Laravel may skip the range because `last_started_on` already equals today. Use another range/time or reset the schedule range started fields during development.
 
 ## Test evidence to capture
 
@@ -215,13 +270,19 @@ When reporting a timeline test, paste logs containing:
 ```text
 Config HTTP status
 Daily timeline enabled/repeat/range count
-Processing command type=scene_apply
-ACK acknowledged/executed
+DailyTimeline active/applying range
 State HTTP status
 Cloud mode ONLINE/OFFLINE
-OfflineTimeline active/applying range
 API recovered
 final State synced
+water_low safety decision if tested
+```
+
+For manual-command compatibility testing, also capture:
+
+```text
+Processing command type=scene_apply
+ACK acknowledged/executed
 ```
 
 ## Decision rule
@@ -229,9 +290,12 @@ final State synced
 Do not begin MQTT work until these tests pass:
 
 ```text
-[ ] Online manual schedule command
-[ ] Online real scheduler minute command
-[ ] Offline cached range apply
-[ ] Recovery final sync
-[ ] Water-low safety during timeline
+[ ] Config contains daily_timeline ranges with outputs
+[ ] ESP32 applies active range while online
+[ ] ESP32 does not re-apply the same range repeatedly
+[ ] ESP32 applies next range at an online boundary
+[ ] ESP32 applies cached range while Laravel/API is offline
+[ ] Recovery final sync works
+[ ] Water-low safety blocks pump during timeline execution
+[ ] Manual Laravel command compatibility still works if needed
 ```
