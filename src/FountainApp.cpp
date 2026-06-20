@@ -6,6 +6,7 @@
 #include "ApiClient.h"
 #include "ApiHealth.h"
 #include "CommandRuntime.h"
+#include "CloudRuntime.h"
 #include "ConfigCache.h"
 #include "ConfigRuntime.h"
 #include "DeviceClock.h"
@@ -65,13 +66,6 @@ const unsigned long API_PROBE_INTERVAL_MS = 30000;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
 const int API_OFFLINE_FAILURE_THRESHOLD = 3;
 
-enum CloudControlMode
-{
-  CLOUD_MODE_UNKNOWN,
-  CLOUD_MODE_ONLINE,
-  CLOUD_MODE_OFFLINE
-};
-
 unsigned long lastConfigFetchAt = 0;
 unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
@@ -79,10 +73,10 @@ unsigned long lastWifiRetryAt = 0;
 unsigned long lastNoCommandLogAt = 0;
 
 ApiHealth apiHealth;
+CloudRuntime cloudRuntime;
 bool outputStateTrusted = false;
 String serverTimeUtc = "";
 String deviceType = "";
-CloudControlMode lastLoggedCloudMode = CLOUD_MODE_UNKNOWN;
 
 ApiClient apiClient;
 HttpDeviceApi httpDeviceApi;
@@ -108,7 +102,6 @@ bool processLocalControls();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
-bool shouldCountApiFailureForOffline(const char *requestName);
 bool probeApiRecovery();
 
 bool isWifiConnected()
@@ -118,7 +111,7 @@ bool isWifiConnected()
 
 bool isOfflineControlMode()
 {
-  return !isWifiConnected() || apiHealth.isServerOffline();
+  return cloudRuntime.isOfflineControlMode(apiHealth, isWifiConnected());
 }
 
 void syncHardwareOutputs()
@@ -194,29 +187,7 @@ bool processLocalControls()
 
 void logCloudModeIfChanged()
 {
-  CloudControlMode currentMode = isOfflineControlMode() ? CLOUD_MODE_OFFLINE : CLOUD_MODE_ONLINE;
-
-  if (currentMode == lastLoggedCloudMode)
-  {
-    return;
-  }
-
-  lastLoggedCloudMode = currentMode;
-
-  if (currentMode == CLOUD_MODE_ONLINE)
-  {
-    Serial.println("Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.");
-    return;
-  }
-
-  if (!isWifiConnected())
-  {
-    Serial.println("Cloud mode: OFFLINE - Wi-Fi disconnected, local buttons/water safety active, keeping last trusted saved output state.");
-  }
-  else
-  {
-    Serial.println("Cloud mode: OFFLINE - API unavailable, local buttons/water safety active, keeping last trusted saved output state.");
-  }
+  cloudRuntime.logModeIfChanged(apiHealth, isWifiConnected());
 }
 
 void updateWaterReadings()
@@ -290,26 +261,14 @@ bool connectWifi(bool allowDevelopmentFallback)
   );
 }
 
-bool shouldCountApiFailureForOffline(const char *requestName)
-{
-  String request = requestName;
-  return request == "commands" || request == "state" || request == "config";
-}
-
 void registerApiSuccess(const char *requestName)
 {
-  apiHealth.registerSuccess(requestName);
+  cloudRuntime.registerSuccess(apiHealth, requestName);
 }
 
 void registerApiFailure(const char *requestName, int statusCode)
 {
-  if (shouldCountApiFailureForOffline(requestName))
-  {
-    apiHealth.registerFailure(requestName, statusCode);
-    return;
-  }
-
-  apiHealth.registerWarning(requestName, statusCode);
+  cloudRuntime.registerFailure(apiHealth, requestName, statusCode);
 }
 
 bool getConfigWithRetry(String &response, int &statusCode, unsigned long timeoutMs = HTTP_TIMEOUT_MS)
