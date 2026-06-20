@@ -934,9 +934,20 @@ void FountainApp::update()
       apiHealth.markProbeAttempt(now);
       Serial.println("API offline mode: probing Laravel...");
 
+      bool hadQueuedLocalState = localStateSyncPending;
+      FountainOutputState queuedLocalOutputs = outputs;
+
       if (fetchConfig())
       {
         lastConfigFetchAt = now;
+
+        if (hadQueuedLocalState)
+        {
+          outputs = queuedLocalOutputs;
+          markOutputStateTrusted("queued local output state restored after API recovery");
+          applySafetyAndSyncHardware();
+        }
+
         logCloudModeIfChanged();
         syncLocalStateIfDue(now);
       }
