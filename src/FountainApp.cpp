@@ -68,6 +68,9 @@ const unsigned long NO_COMMAND_LOG_INTERVAL_MS = 30000;
 const unsigned long LOCAL_STATE_SYNC_RETRY_MS = 5000;
 const unsigned long API_PROBE_INTERVAL_MS = 30000;
 const unsigned long TIMELINE_EVALUATE_INTERVAL_MS = 5000;
+const unsigned long NETWORK_TASK_INTERVAL_MS = 50;
+const uint32_t NETWORK_TASK_STACK_WORDS = 12288;
+const UBaseType_t NETWORK_TASK_PRIORITY = 1;
 const int CONFIG_FETCH_MAX_ATTEMPTS = 1;
 const int API_OFFLINE_FAILURE_THRESHOLD = 3;
 
@@ -76,6 +79,9 @@ unsigned long lastStateSyncAt = 0;
 unsigned long lastCommandPollAt = 0;
 unsigned long lastWifiRetryAt = 0;
 unsigned long lastTimelineEvaluateAt = 0;
+
+TaskHandle_t networkTaskHandle = nullptr;
+volatile bool networkTaskEnabled = false;
 
 ApiHealth apiHealth;
 CloudRuntime cloudRuntime;
@@ -113,6 +119,9 @@ bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
 bool probeApiRecovery();
+void startNetworkTask();
+void networkTaskLoop(void *parameter);
+void runNetworkRuntimeOnce(unsigned long now);
 
 bool isWifiConnected()
 {
@@ -406,6 +415,138 @@ bool pollCommands()
   );
 }
 
+void runNetworkRuntimeOnce(unsigned long now)
+{
+  if (isSetupPortalActive())
+  {
+    return;
+  }
+
+  if (!isWifiConnected())
+  {
+    if (now - lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS)
+    {
+      Serial.println("Wi-Fi offline. Retrying connection from network task...");
+      connectWifi(true);
+      lastWifiRetryAt = now;
+    }
+
+    return;
+  }
+
+  if (apiHealth.isServerOffline())
+  {
+    if (apiHealth.shouldProbe(now))
+    {
+      apiHealth.markProbeAttempt(now);
+
+      if (stateSyncRuntime.hasPendingLocalSync())
+      {
+        Serial.println("API offline mode: probing Laravel before local state sync...");
+
+        if (probeApiRecovery())
+        {
+          logCloudModeIfChanged();
+          syncLocalStateIfDue(now);
+        }
+      }
+      else
+      {
+        Serial.println("API offline mode: probing Laravel...");
+
+        if (fetchConfig())
+        {
+          lastConfigFetchAt = now;
+          logCloudModeIfChanged();
+        }
+      }
+    }
+
+    logCloudModeIfChanged();
+    return;
+  }
+
+  if (syncLocalStateIfDue(now))
+  {
+    logCloudModeIfChanged();
+    return;
+  }
+
+  if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
+  {
+    bool commandProcessed = pollCommands();
+    logCloudModeIfChanged();
+    lastCommandPollAt = now;
+
+    if (commandProcessed)
+    {
+      return;
+    }
+  }
+
+  if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
+  {
+    postState(stateSyncRuntime.currentOutputSource());
+    logCloudModeIfChanged();
+    lastStateSyncAt = now;
+  }
+
+  if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
+  {
+    fetchConfig();
+    logCloudModeIfChanged();
+    lastConfigFetchAt = now;
+  }
+}
+
+void networkTaskLoop(void *parameter)
+{
+  (void)parameter;
+
+  Serial.println("Network/API task started. Main loop remains responsible for buttons, safety, and RGB animation.");
+
+  for (;;)
+  {
+    if (networkTaskEnabled)
+    {
+      runNetworkRuntimeOnce(millis());
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(NETWORK_TASK_INTERVAL_MS));
+  }
+}
+
+void startNetworkTask()
+{
+  if (networkTaskHandle != nullptr)
+  {
+    networkTaskEnabled = true;
+    return;
+  }
+
+  BaseType_t result = xTaskCreatePinnedToCore(
+    networkTaskLoop,
+    "network_api",
+    NETWORK_TASK_STACK_WORDS,
+    nullptr,
+    NETWORK_TASK_PRIORITY,
+    &networkTaskHandle,
+    0
+  );
+
+  if (result == pdPASS)
+  {
+    networkTaskEnabled = true;
+    Serial.println("Network/API task created on core 0.");
+  }
+  else
+  {
+    networkTaskHandle = nullptr;
+    networkTaskEnabled = false;
+    Serial.println("Network/API task creation failed. API runtime will not run in background.");
+  }
+}
+
 
 void FountainApp::begin()
 {
@@ -467,7 +608,10 @@ void FountainApp::begin()
     pollCommands();
   }
 
-  Serial.println("Local controls and water safety are active during runtime.");
+  startNetworkTask();
+
+  Serial.println("Local controls, water safety, and RGB animation are active in the main loop.");
+  Serial.println("Laravel API/config/commands/state sync are handled by the background network task.");
   logCloudModeIfChanged();
 }
 
@@ -490,93 +634,8 @@ void FountainApp::update()
 
   if (lastTimelineEvaluateAt == 0 || now - lastTimelineEvaluateAt >= TIMELINE_EVALUATE_INTERVAL_MS)
   {
-    bool timelineChanged = processDailyTimeline();
+    processDailyTimeline();
     lastTimelineEvaluateAt = now;
-
-    if (timelineChanged && isWifiConnected() && !apiHealth.isServerOffline())
-    {
-      syncLocalStateIfDue(now);
-    }
-  }
-
-  if (!isWifiConnected())
-  {
-    if (now - lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS)
-    {
-      Serial.println("Wi-Fi offline. Retrying connection...");
-      connectWifi(true);
-      lastWifiRetryAt = now;
-    }
-
-    delay(20);
-    return;
-  }
-
-  if (apiHealth.isServerOffline())
-  {
-    if (apiHealth.shouldProbe(now))
-    {
-      apiHealth.markProbeAttempt(now);
-
-      if (stateSyncRuntime.hasPendingLocalSync())
-      {
-        Serial.println("API offline mode: probing Laravel before local state sync...");
-
-        if (probeApiRecovery())
-        {
-          logCloudModeIfChanged();
-          syncLocalStateIfDue(now);
-        }
-      }
-      else
-      {
-        Serial.println("API offline mode: probing Laravel...");
-
-        if (fetchConfig())
-        {
-          lastConfigFetchAt = now;
-          logCloudModeIfChanged();
-        }
-      }
-    }
-
-    logCloudModeIfChanged();
-    delay(20);
-    return;
-  }
-
-  if (syncLocalStateIfDue(now))
-  {
-    logCloudModeIfChanged();
-    delay(20);
-    return;
-  }
-
-  if (now - lastCommandPollAt >= COMMAND_POLL_INTERVAL_MS)
-  {
-    bool commandProcessed = pollCommands();
-    logCloudModeIfChanged();
-    lastCommandPollAt = now;
-
-    if (commandProcessed)
-    {
-      delay(20);
-      return;
-    }
-  }
-
-  if (now - lastStateSyncAt >= STATE_SYNC_INTERVAL_MS)
-  {
-    postState(stateSyncRuntime.currentOutputSource());
-    logCloudModeIfChanged();
-    lastStateSyncAt = now;
-  }
-
-  if (now - lastConfigFetchAt >= CONFIG_FETCH_INTERVAL_MS)
-  {
-    fetchConfig();
-    logCloudModeIfChanged();
-    lastConfigFetchAt = now;
   }
 
   delay(20);
