@@ -10,6 +10,8 @@ This document records the current Smart Fountain ESP32 hardware map.
 | COB output | GPIO26 | Digital output, active HIGH |
 | RGB / NeoPixel data | GPIO27 | NeoPixel data output |
 | Water-low switch | GPIO32 | Digital input, active LOW, debounced |
+| Network/server status LED | GPIO23 | Digital output, active HIGH |
+| Water safety status LED | GPIO13 | Digital output, active HIGH |
 | Pump local button | GPIO18 | Digital input, active LOW, debounced |
 | COB local button | GPIO19 | Digital input, active LOW, debounced |
 | Wi-Fi reset button | GPIO33 | Hold to GND for setup/reset flow |
@@ -66,6 +68,49 @@ slow_rainbow
 warm_glow
 water_shimmer
 night_mode
+```
+
+## Indicator behavior
+
+### Network/server status LED
+
+```text
+pin: GPIO23
+active: HIGH
+```
+
+Expected LED states:
+
+```text
+fast blink = Wi-Fi disconnected or setup portal active
+slow blink = Wi-Fi connected but Laravel/API offline
+solid ON   = Wi-Fi connected and Laravel/API online
+```
+
+### Water safety status LED
+
+```text
+pin: GPIO13
+active: HIGH
+```
+
+Expected LED states:
+
+```text
+OFF      = water OK
+solid ON = water low / pump protected
+```
+
+Both status LEDs must be wired with current-limiting resistors:
+
+```text
+GPIO -> resistor -> LED -> GND
+```
+
+Recommended resistor range:
+
+```text
+220R to 1kR
 ```
 
 ## Input behavior
@@ -159,6 +204,8 @@ Safe boot OFF must not be pushed to Laravel until a trusted cached or fresh conf
 [ ] actual pump MOSFET/relay electrical behavior under load
 [ ] actual COB driver behavior and brightness/PWM plan
 [ ] final water-level sensor/switch wiring
+[ ] network/server LED visibility and blink timing
+[ ] water safety LED visibility
 [ ] long-run NeoPixel power stability
 [ ] waterproofing and enclosure cable routing
 ```
