@@ -37,6 +37,13 @@ State synced.
 Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
 ```
 
+Also check:
+
+```text
+Network/server status LED becomes solid ON.
+Water safety LED is OFF when water is OK.
+```
+
 ### 2. Config and timeline parse
 
 Expected:
@@ -106,7 +113,28 @@ State HTTP status: 200
 State synced.
 ```
 
-### 6. API offline mode
+### 6. Status indicator LEDs
+
+Check the physical status LEDs.
+
+Network/server LED on GPIO23:
+
+```text
+[ ] Wi-Fi + Laravel online -> solid ON
+[ ] Wi-Fi disconnected or setup portal active -> fast blink
+[ ] Wi-Fi connected but Laravel/API offline -> slow blink
+```
+
+Water safety LED on GPIO13:
+
+```text
+[ ] water OK -> OFF
+[ ] water low / float switch active -> solid ON
+[ ] pump ON request blocked/forced OFF while water safety LED is ON
+[ ] LED turns OFF after water returns OK and debounce passes
+```
+
+### 7. API offline mode
 
 Stop Laravel.
 
@@ -118,7 +146,13 @@ Cloud mode: OFFLINE - API unavailable, local buttons/water safety active, keepin
 State sync skipped: API offline mode.
 ```
 
-### 7. Local controls while offline
+Also check:
+
+```text
+Network/server status LED slow blinks.
+```
+
+### 8. Local controls while offline
 
 Press pump/COB buttons while Laravel is stopped.
 
@@ -134,7 +168,7 @@ COB local button pressed.
 Local output change queued for Laravel state sync.
 ```
 
-### 8. API recovery
+### 9. API recovery
 
 Restart Laravel.
 
@@ -149,6 +183,12 @@ Syncing local button output change to Laravel...
 POST /api/device/state
 State HTTP status: 200
 State synced.
+```
+
+Also check:
+
+```text
+Network/server status LED returns to solid ON.
 ```
 
 ## Daily timeline test checklist
@@ -166,6 +206,7 @@ Minimum daily timeline tests:
 [ ] offline cached timeline applies range while Laravel is down
 [ ] final actual state syncs after Laravel recovers
 [ ] water-low blocks pump during scheduled/offline timeline apply
+[ ] water safety LED turns ON during water-low timeline safety condition
 ```
 
 ## Regression risk areas
@@ -181,6 +222,7 @@ probeApiRecovery
 fetchConfig
 OfflineTimeline
 FountainOutputs water safety
+StatusIndicators
 DeviceClock / RTC logic
 ```
 
@@ -193,6 +235,8 @@ At minimum:
 [ ] online boot state sync passes
 [ ] one local button sync passes
 [ ] one dashboard command passes
+[ ] network/server LED status passes
+[ ] water safety LED status passes
 ```
 
 For schedule/timeline changes:
