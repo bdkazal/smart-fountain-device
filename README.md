@@ -20,6 +20,7 @@ Full documentation is kept in [`docs/`](docs/).
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Firmware module architecture and responsibility boundaries. |
 | [`docs/SETUP_AND_FLASHING.md`](docs/SETUP_AND_FLASHING.md) | Setup, secrets, build, upload, and monitor workflow. |
 | [`docs/HARDWARE_PINS.md`](docs/HARDWARE_PINS.md) | GPIO pin map and hardware assumptions. |
+| [`docs/STATUS_INDICATORS.md`](docs/STATUS_INDICATORS.md) | Network/server and water-safety LED indicator behavior. |
 | [`docs/API_AND_STATE_FLOW.md`](docs/API_AND_STATE_FLOW.md) | Laravel config, commands, ACK, state sync, and payload rules. |
 | [`docs/OFFLINE_RECOVERY_AND_SAFETY.md`](docs/OFFLINE_RECOVERY_AND_SAFETY.md) | Offline mode, local controls, recovery sync, config cache, and water safety. |
 | [`docs/DAILY_TIMELINE_OPERATION.md`](docs/DAILY_TIMELINE_OPERATION.md) | Online Laravel schedule vs offline cached timeline behavior. |
@@ -30,7 +31,7 @@ Note: the Laravel repository uses uppercase `Docs/`. This firmware repository us
 
 ## Current stable status
 
-The firmware is stable after the runtime refactor chain through PR #9.
+The firmware is stable after the runtime refactor chain through PR #15.
 
 Verified on real ESP32 hardware:
 
@@ -56,6 +57,8 @@ Verified on real ESP32 hardware:
 [x] local controls work while API is offline
 [x] API recovery probe works
 [x] final queued local state syncs after Laravel recovers
+[x] network/server status LED works
+[x] water safety status LED works
 ```
 
 Focused behavior still needing real-device verification:
@@ -108,6 +111,8 @@ The monitor speed is also configured in `platformio.ini`.
 ```text
 Biztola Smart Fountain ESP32 starting...
 Device storage initialized.
+Network/server status LED ready: GPIO 23 active_HIGH
+Water safety status LED ready: GPIO 13 active_HIGH
 All outputs forced OFF: safe boot hardware default
 Output state untrusted: safe boot OFF is hardware-only until cached or fresh config loads
 Loading cached Laravel config from flash. bytes=...
@@ -142,6 +147,26 @@ Firmware keeps local control and safety active.
 
 ```text
 API failures -> server-offline mode -> local buttons still work -> local state queued -> recovery probe -> final actual state syncs to Laravel
+```
+
+### Status indicators
+
+```text
+Network LED:
+fast blink = Wi-Fi disconnected or setup portal active
+slow blink = Wi-Fi connected but Laravel/API offline
+solid ON   = Wi-Fi connected and Laravel/API online
+
+Water safety LED:
+OFF      = water OK
+solid ON = water low / pump protected
+```
+
+See:
+
+```text
+docs/STATUS_INDICATORS.md
+docs/HARDWARE_PINS.md
 ```
 
 ### Daily timeline
