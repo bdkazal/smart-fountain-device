@@ -8,6 +8,7 @@
 // - COB controlled as ON/OFF through a MOSFET/driver signal
 // - 12 LED WS2812B / NeoPixel ring or strip controlled through one data pin
 // - Local pump/COB buttons connected to GPIO and GND
+// - Network/server and water-safety indicator LEDs through resistors
 // - HW-111 / DS3231 RTC on I2C
 //
 // IMPORTANT:
@@ -15,7 +16,7 @@
 // - Pump/COB/NeoPixel power must go through the external supply and driver/load path.
 // - ESP32 GND, power-supply GND, MOSFET GND, buck GND, NeoPixel GND, and RTC GND must be common.
 // - Keep the pump in water before ON testing.
-// - Do not connect LEDs directly to ESP32 GPIO except the NeoPixel data input.
+// - Do not connect indicator LEDs directly without a current-limiting resistor.
 // - Local buttons connect GPIO to GND only; never connect 5V/12V to button GPIO pins.
 // - Power the HW-111 / DS3231 RTC from 3V3 for ESP32-safe I2C pull-ups.
 // - Avoid ESP32 flash pins GPIO6-GPIO11 and boot strapping pins for safety inputs.
@@ -49,6 +50,18 @@
 #define WATER_LEVEL_SWITCH_ACTIVE_LOW 1
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
+
+// Status indicator LEDs.
+// Wiring:
+// GPIO23 -> resistor -> network/server LED -> GND
+// GPIO13 -> resistor -> water safety LED -> GND
+// ACTIVE_HIGH means GPIO HIGH turns the indicator LED ON.
+#define NET_STATUS_LED_PIN 23
+#define NET_STATUS_LED_ACTIVE_HIGH 1
+#define WATER_SAFETY_LED_PIN 13
+#define WATER_SAFETY_LED_ACTIVE_HIGH 1
+#define NET_STATUS_FAST_BLINK_MS 250
+#define NET_STATUS_SLOW_BLINK_MS 1000
 
 // Local physical control buttons.
 // Wiring:
