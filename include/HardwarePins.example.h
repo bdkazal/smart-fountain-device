@@ -38,6 +38,19 @@
 #define WATER_LEVEL_SWITCH_USE_PULLUP 1
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
 
+// Status indicator LEDs.
+// Suggested ESP32 DevKit V1 pins:
+// - network/server status LED: GPIO23
+// - water safety status LED: GPIO13
+// Wiring for ACTIVE_HIGH: GPIO -> resistor -> LED -> GND.
+// Set to -1 to disable.
+#define NET_STATUS_LED_PIN -1
+#define NET_STATUS_LED_ACTIVE_HIGH 1
+#define WATER_SAFETY_LED_PIN -1
+#define WATER_SAFETY_LED_ACTIVE_HIGH 1
+#define NET_STATUS_FAST_BLINK_MS 250
+#define NET_STATUS_SLOW_BLINK_MS 1000
+
 // COB light PWM output.
 // TBD: choose final ESP32-C3 GPIO and current-limited driver circuit.
 #define COB_PWM_PIN -1
