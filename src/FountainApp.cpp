@@ -25,6 +25,7 @@
 #include "SetupPortal.h"
 #include "StateSyncRuntime.h"
 #include "StateSyncFlowRuntime.h"
+#include "StatusIndicators.h"
 #include "WaterLevelSensor.h"
 #include "WifiReset.h"
 #include "WifiRuntime.h"
@@ -108,11 +109,13 @@ LocalControls localControls;
 LocalRuntime localRuntime;
 StateSyncRuntime stateSyncRuntime;
 StateSyncFlowRuntime stateSyncFlowRuntime;
+StatusIndicators statusIndicators;
 WifiRuntime wifiRuntime;
 
 void updateWaterReadings();
 void syncHardwareOutputs();
 void applySafetyAndSyncHardware();
+void updateStatusIndicators();
 bool processLocalControls();
 bool processDailyTimeline();
 bool connectWifi(bool allowDevelopmentFallback = true);
@@ -231,6 +234,19 @@ void enforceWaterSafety()
   syncHardwareOutputs();
 }
 
+void updateStatusIndicators()
+{
+  bool wifiConnected = isWifiConnected();
+  bool serverOnline = wifiConnected && !apiHealth.isServerOffline();
+
+  statusIndicators.update(
+    wifiConnected,
+    serverOnline,
+    readings.waterLow,
+    isSetupPortalActive()
+  );
+}
+
 bool loadCachedConfigIfAvailable()
 {
   return configFlowRuntime.loadCachedConfigIfAvailable(
@@ -249,6 +265,7 @@ void serviceRuntimeDuringWifiConnect()
 {
   processLocalControls();
   applySafetyAndSyncHardware();
+  updateStatusIndicators();
 }
 
 bool connectWithCredentials(const String &ssid, const String &password)
@@ -564,9 +581,11 @@ void FountainApp::begin()
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   httpDeviceApi.begin(&apiClient, HTTP_TIMEOUT_MS, COMMAND_HTTP_TIMEOUT_MS);
   hardwareOutputs.begin();
+  statusIndicators.begin();
   waterLevelSensor.begin();
   localControls.begin();
   updateWaterReadings();
+  updateStatusIndicators();
   forceAllOutputsOff("safe boot hardware default");
   markOutputStateUntrusted("safe boot OFF is hardware-only until cached or fresh config loads");
 
@@ -580,6 +599,7 @@ void FountainApp::begin()
     markOutputStateUntrusted("Wi-Fi setup mode output OFF must not sync to Laravel");
     startSetupPortal();
     logCloudModeIfChanged();
+    updateStatusIndicators();
     return;
   }
 
@@ -613,6 +633,7 @@ void FountainApp::begin()
   Serial.println("Local controls, water safety, and RGB animation are active in the main loop.");
   Serial.println("Laravel API/config/commands/state sync are handled by the background network task.");
   logCloudModeIfChanged();
+  updateStatusIndicators();
 }
 
 void FountainApp::update()
@@ -623,6 +644,8 @@ void FountainApp::update()
 
   if (isSetupPortalActive())
   {
+    updateWaterReadings();
+    updateStatusIndicators();
     handleSetupPortal();
     delay(20);
     return;
@@ -631,6 +654,7 @@ void FountainApp::update()
   updateWaterReadings();
   enforceWaterSafety();
   logCloudModeIfChanged();
+  updateStatusIndicators();
 
   if (lastTimelineEvaluateAt == 0 || now - lastTimelineEvaluateAt >= TIMELINE_EVALUATE_INTERVAL_MS)
   {
