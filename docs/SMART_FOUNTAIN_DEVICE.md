@@ -48,6 +48,7 @@ Firmware owns:
 safe boot
 hardware output state
 local buttons
+status indicator LEDs
 water-low safety
 config cache
 API offline mode
@@ -96,23 +97,24 @@ Normal boot:
 1. Start firmware
 2. Initialize storage
 3. Initialize output GPIO/NeoPixel
-4. Force outputs OFF for safe hardware boot
-5. Mark state untrusted so safe boot OFF is not synced to Laravel
-6. Initialize water-low sensor
-7. Initialize local buttons
-8. Initialize Wi-Fi reset button
-9. Load RTC time if available
-10. Load cached Laravel config if available
-11. Apply trusted cached output state
-12. Connect Wi-Fi
-13. Fetch fresh Laravel config when available
-14. Sync DeviceClock from server_time_utc when available
-15. Update RTC if needed
-16. Parse outputs, scenes, and daily_timeline
-17. Save compact cache if changed
-18. POST actual state to Laravel when API is available
-19. Start background Network/API task
-20. Enter main hardware runtime loop
+4. Initialize status indicator LEDs
+5. Force outputs OFF for safe hardware boot
+6. Mark state untrusted so safe boot OFF is not synced to Laravel
+7. Initialize water-low sensor
+8. Initialize local buttons
+9. Initialize Wi-Fi reset button
+10. Load RTC time if available
+11. Load cached Laravel config if available
+12. Apply trusted cached output state
+13. Connect Wi-Fi
+14. Fetch fresh Laravel config when available
+15. Sync DeviceClock from server_time_utc when available
+16. Update RTC if needed
+17. Parse outputs, scenes, and daily_timeline
+18. Save compact cache if changed
+19. POST actual state to Laravel when API is available
+20. Start background Network/API task
+21. Enter main hardware runtime loop
 ```
 
 Main hardware runtime loop:
@@ -121,6 +123,7 @@ Main hardware runtime loop:
 local button processing
 water-low safety enforcement
 hardware output apply
+status indicator LED update
 NeoPixel/effect rendering
 offline cached timeline check
 setup portal handling when active
@@ -202,14 +205,36 @@ state sync remains queued until Wi-Fi/API recovery
 
 The current Wi-Fi retry path can still spend noticeable time attempting stored credentials and DeviceSecrets fallback credentials. Local controls are serviced during retry, but future work should reduce remaining blocking/retry pressure.
 
+## Controller GPIO layout
+
+Current ESP32 DevKit V1 / ESP32-WROOM-32 wiring groups external fountain wiring on the left side and local controller-box wiring on the right side.
+
+```text
+Fountain/RJ45/external-load side:
+GPIO25 = pump MOSFET control
+GPIO26 = COB MOSFET control
+GPIO27 = RGB / NeoPixel data
+GPIO32 = float switch input
+
+Controller-box local side:
+GPIO19 = pump local button
+GPIO18 = COB local button
+GPIO23 = Wi-Fi reset/setup button
+GPIO17 = network/server status LED
+GPIO16 = water safety status LED
+GPIO21 = RTC SDA
+GPIO22 = RTC SCL
+```
+
 ## Local buttons
 
 Local buttons are hardware controls independent of Laravel availability.
 
 | Button | GPIO | Action |
 | --- | --- | --- |
-| Pump button | GPIO18 | Toggle pump ON/OFF, unless water_low prevents pump ON |
-| COB button | GPIO19 | Toggle COB ON/OFF |
+| Pump button | GPIO19 | Toggle pump ON/OFF, unless water_low prevents pump ON |
+| COB button | GPIO18 | Toggle COB ON/OFF |
+| Wi-Fi reset/setup button | GPIO23 | Hold 3 seconds to clear saved Wi-Fi and start setup hotspot |
 
 Local button changes use source:
 
@@ -218,6 +243,13 @@ local_button
 ```
 
 When Laravel is online, local changes are synced by the Network/API task. When Laravel is offline, the final state is queued and synced after recovery.
+
+## Status indicators
+
+| Indicator | GPIO | Behavior |
+| --- | --- | --- |
+| Network/server LED | GPIO17 | Fast blink for Wi-Fi/setup, slow blink for API offline, solid ON when online |
+| Water safety LED | GPIO16 | ON when water_low is true / pump is protected |
 
 ## Water-low safety
 
@@ -276,213 +308,4 @@ The night range crosses midnight. Firmware treats cross-midnight ranges as activ
 
 ```text
 local_time >= start_time OR local_time < end_time
-```
-
-There are two timeline behaviors:
-
-```text
-Online: Laravel may create scheduled scene_apply commands.
-Offline: ESP32 applies cached range outputs locally.
-```
-
-Important offline rule:
-
-```text
-Offline timeline uses the last cached Laravel config from flash.
-```
-
-So if the server scene/timeline is changed, the device must connect at least once and fetch the updated config before that new timeline can be used offline.
-
-## Setup portal mode
-
-Setup portal mode is a special maintenance/setup state, not normal fountain operation.
-
-Current V1 behavior:
-
-```text
-setup request active
-cached config is not loaded
-normal daily timeline is not run
-outputs are forced OFF for safety
-setup hotspot starts
-local pump/COB buttons can still work
-safe boot OFF is not synced to Laravel
-```
-
-This is intentionally conservative. Normal scene RGB behavior is not required during setup mode.
-
-Future optional improvement:
-
-```text
-Add setup-mode RGB indicator effect.
-```
-
-Goal:
-
-```text
-show a simple setup/hotspot indicator, such as slow blue breathing
-avoid loading normal scene/timeline during setup mode
-keep pump OFF by default
-keep setup mode safe and visually understandable
-```
-
-## Production response issue and fix
-
-### Issue found
-
-During production testing against:
-
-```text
-https://iot.biztola.com
-```
-
-local button response and NeoPixel effects were poor compared with the local LAN Laravel server.
-
-Symptoms:
-
-```text
-NeoPixel effects looked choppy or only changed around command/state activity
-local pump/COB buttons sometimes required repeated pressing
-pump/COB dashboard commands still worked
-```
-
-### Cause
-
-The original runtime handled Laravel/API work inside the same main loop that handled local buttons, safety, and RGB rendering.
-
-Production HTTPS requests are slower than local LAN HTTP requests. A blocking config fetch, command poll, command ACK, or state POST could pause the main loop long enough to make local buttons and NeoPixel animation feel unresponsive.
-
-### Fix applied
-
-Network/API work was moved into a dedicated FreeRTOS task.
-
-Main loop now handles:
-
-```text
-local buttons
-water safety
-hardware output apply
-RGB animation
-setup portal handling
-offline timeline evaluation
-```
-
-Network/API task handles:
-
-```text
-Wi-Fi retry
-API offline probe
-config fetch
-command poll
-command ACK
-state sync
-queued local-state recovery sync
-```
-
-Commit:
-
-```text
-3274340 Move API runtime into network task
-```
-
-### Verified result
-
-Production testing showed:
-
-```text
-local pump button works
-local COB button works
-dashboard pump/COB commands work
-state sync works
-command ACK works
-NeoPixel remains smoother while HTTPS requests run
-API offline mode works
-Wi-Fi offline mode keeps local controls active
-cached config is restored after reboot
-```
-
-## Future improvement goals
-
-### 1. Setup-mode RGB indicator effect
-
-Add a simple visual state for setup portal mode.
-
-Target behavior:
-
-```text
-setup portal active -> RGB slow blue breathing/pulse
-normal cached scene/timeline still disabled
-pump stays OFF by default
-COB stays OFF by default unless local button toggles it
-```
-
-Reason:
-
-```text
-Customer/technician can see that the device is in setup/hotspot mode.
-```
-
-This is not required for normal online/offline runtime.
-
-### 2. Reduce blocking Wi-Fi retry behavior
-
-Current retry works, but Wi-Fi connection attempts can still be long and noisy.
-
-Future goal:
-
-```text
-make Wi-Fi retry less blocking
-avoid long repeated connect attempts
-keep local button/RGB response fully smooth during Wi-Fi reconnect attempts
-retry less aggressively after repeated failures
-keep setup portal separate from normal retry flow
-```
-
-Possible approach:
-
-```text
-state-machine Wi-Fi retry
-shorter connection windows
-backoff after repeated failures
-avoid repeated DeviceSecrets fallback attempts in production builds
-```
-
-## Current verification status
-
-Verified:
-
-```text
-[x] build succeeds
-[x] Wi-Fi stored credentials boot path
-[x] cached config load
-[x] fresh config fetch
-[x] DeviceClock server UTC sync
-[x] RTC drift check/update path
-[x] boot state sync
-[x] dashboard RGB command
-[x] dashboard pump command
-[x] dashboard COB command
-[x] command ACK acknowledged/executed
-[x] local pump button
-[x] local COB button
-[x] local button state sync
-[x] background Network/API task
-[x] production HTTPS responsiveness improvement
-[x] API offline mode
-[x] API recovery probe
-[x] Wi-Fi offline mode local controls
-[x] cached config restore after reboot
-[x] queued local state while offline
-```
-
-Needs focused testing:
-
-```text
-[ ] online daily timeline command creation from Laravel scheduler
-[ ] firmware applying scheduled scene_apply command
-[ ] offline cached timeline apply at exact range boundary
-[ ] water-low safety during scheduled/offline timeline apply
-[ ] recovery sync after real production outage, not only wrong/offline test URL
-[ ] setup-mode RGB indicator effect, optional future UX improvement
-[ ] reduced blocking Wi-Fi retry behavior, optional future robustness improvement
 ```
