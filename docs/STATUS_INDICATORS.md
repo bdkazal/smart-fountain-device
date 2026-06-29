@@ -17,8 +17,8 @@ Water safety status LED
 
 | Indicator | GPIO | Behavior |
 | --- | --- | --- |
-| Network/server LED | GPIO23 | Shows Wi-Fi/Laravel connection state |
-| Water safety LED | GPIO13 | Shows float switch / pump safety state |
+| Network/server LED | GPIO17 | Shows Wi-Fi/Laravel connection state |
+| Water safety LED | GPIO16 | Shows float switch / pump safety state |
 
 Both LEDs are active HIGH in the current ESP32 DevKit V1 hardware config.
 
@@ -27,8 +27,8 @@ Both LEDs are active HIGH in the current ESP32 DevKit V1 hardware config.
 Use a current-limiting resistor for each LED.
 
 ```text
-GPIO23 -> resistor -> Network LED -> GND
-GPIO13 -> resistor -> Water Safety LED -> GND
+GPIO17 -> resistor -> Network LED -> GND
+GPIO16 -> resistor -> Water Safety LED -> GND
 ```
 
 Recommended resistor range:
@@ -93,6 +93,17 @@ HIGH = water OK
 
 The switch uses ESP32 internal pull-up and debounce logic.
 
+## Controller-box placement
+
+The LEDs are now assigned to right-side ESP32 GPIOs for cleaner veroboard routing:
+
+```text
+GPIO17 = network/server status LED
+GPIO16 = water safety status LED
+```
+
+The fountain/RJ45/external-load wiring remains on the left-side GPIO group.
+
 ## Test checklist
 
 ### Network/server LED
@@ -115,9 +126,16 @@ The switch uses ESP32 internal pull-up and debounce logic.
 
 ## Confirmed status
 
-Current hardware test result:
+Previous hardware test result before pin move:
 
 ```text
-[x] Network/server LED works
-[x] Water safety LED works
+[x] Network/server LED works on old GPIO23 assignment
+[x] Water safety LED works on old GPIO13 assignment
+```
+
+Retest required after moving to GPIO17/GPIO16:
+
+```text
+[ ] Network/server LED works on GPIO17
+[ ] Water safety LED works on GPIO16
 ```
