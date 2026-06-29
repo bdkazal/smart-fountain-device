@@ -2,14 +2,22 @@
 
 #include <Arduino.h>
 
+#if __has_include("HardwarePins.h")
+#include "HardwarePins.h"
+#else
+#include "HardwarePins.example.h"
+#endif
+
 #include "DeviceStorage.h"
 #include "SetupPortal.h"
 #include "WifiConfig.h"
 
+#ifndef WIFI_RESET_BUTTON_PIN
+#define WIFI_RESET_BUTTON_PIN 33
+#endif
+
 namespace
 {
-static const int WIFI_RESET_BUTTON_PIN = 33;
-
 bool buttonHolding = false;
 bool resetTriggeredDuringHold = false;
 bool monitorTaskStarted = false;
