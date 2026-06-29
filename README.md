@@ -33,7 +33,7 @@ Note: the Laravel repository uses uppercase `Docs/`. This firmware repository us
 
 The firmware is stable after the runtime refactor chain through PR #15.
 
-Verified on real ESP32 hardware:
+Verified on real ESP32 hardware before the latest controller GPIO move:
 
 ```text
 [x] PlatformIO ESP32 project builds
@@ -57,17 +57,41 @@ Verified on real ESP32 hardware:
 [x] local controls work while API is offline
 [x] API recovery probe works
 [x] final queued local state syncs after Laravel recovers
-[x] network/server status LED works
-[x] water safety status LED works
+[x] network/server status LED works on old GPIO23 assignment
+[x] water safety status LED works on old GPIO13 assignment
 ```
 
 Focused behavior still needing real-device verification:
 
 ```text
+[ ] local pump button works after moving to GPIO19
+[ ] local COB button works after moving to GPIO18
+[ ] Wi-Fi reset/setup button works from GPIO23
+[ ] network/server status LED works after moving to GPIO17
+[ ] water safety status LED works after moving to GPIO16
 [ ] Laravel online daily timeline creates scene_apply at range start time
 [ ] ESP32 applies scheduled scene_apply command and syncs actual state
 [ ] ESP32 offline cached timeline applies range outputs at real boundary time
 [ ] water-low safety still protects pump during scheduled/offline timeline apply
+```
+
+## Current controller GPIO layout
+
+```text
+Fountain/RJ45/external-load side:
+GPIO25 = pump MOSFET control
+GPIO26 = COB MOSFET control
+GPIO27 = RGB / NeoPixel data
+GPIO32 = float switch input
+
+Controller-box local side:
+GPIO19 = pump local button
+GPIO18 = COB local button
+GPIO23 = Wi-Fi reset/setup button
+GPIO17 = network/server status LED
+GPIO16 = water safety status LED
+GPIO21 = RTC SDA
+GPIO22 = RTC SCL
 ```
 
 ## Quick setup
@@ -111,8 +135,8 @@ The monitor speed is also configured in `platformio.ini`.
 ```text
 Biztola Smart Fountain ESP32 starting...
 Device storage initialized.
-Network/server status LED ready: GPIO 23 active_HIGH
-Water safety status LED ready: GPIO 13 active_HIGH
+Network/server status LED ready: GPIO 17 active_HIGH
+Water safety status LED ready: GPIO 16 active_HIGH
 All outputs forced OFF: safe boot hardware default
 Output state untrusted: safe boot OFF is hardware-only until cached or fresh config loads
 Loading cached Laravel config from flash. bytes=...
