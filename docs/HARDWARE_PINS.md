@@ -10,13 +10,41 @@ This document records the current Smart Fountain ESP32 hardware map.
 | COB output | GPIO26 | Digital output, active HIGH |
 | RGB / NeoPixel data | GPIO27 | NeoPixel data output |
 | Water-low switch | GPIO32 | Digital input, active LOW, debounced |
-| Network/server status LED | GPIO23 | Digital output, active HIGH |
-| Water safety status LED | GPIO13 | Digital output, active HIGH |
-| Pump local button | GPIO18 | Digital input, active LOW, debounced |
-| COB local button | GPIO19 | Digital input, active LOW, debounced |
-| Wi-Fi reset button | GPIO33 | Hold to GND for setup/reset flow |
+| Network/server status LED | GPIO17 | Digital output, active HIGH |
+| Water safety status LED | GPIO16 | Digital output, active HIGH |
+| Pump local button | GPIO19 | Digital input, active LOW, debounced |
+| COB local button | GPIO18 | Digital input, active LOW, debounced |
+| Wi-Fi reset button | GPIO23 | Hold to GND for setup/reset flow |
 | RTC SDA | GPIO21 | I2C SDA for DS3231/HW-111 |
 | RTC SCL | GPIO22 | I2C SCL for DS3231/HW-111 |
+
+## Physical layout rule
+
+The ESP32 DevKit V1 / ESP32-WROOM-32 controller board is organized like this for the veroboard build:
+
+```text
+Left side GPIOs  = fountain/RJ45/external-load side
+Right side GPIOs = local controller-box switches, LEDs, RTC
+```
+
+Current grouping:
+
+```text
+Left side:
+GPIO25 = pump MOSFET control
+GPIO26 = COB MOSFET control
+GPIO27 = RGB / NeoPixel data
+GPIO32 = float switch input
+
+Right side:
+GPIO19 = pump local button
+GPIO18 = COB local button
+GPIO23 = Wi-Fi reset/setup button
+GPIO17 = network/server status LED
+GPIO16 = water safety status LED
+GPIO21 = RTC SDA
+GPIO22 = RTC SCL
+```
 
 ## Output behavior
 
@@ -75,7 +103,7 @@ night_mode
 ### Network/server status LED
 
 ```text
-pin: GPIO23
+pin: GPIO17
 active: HIGH
 ```
 
@@ -90,7 +118,7 @@ solid ON   = Wi-Fi connected and Laravel/API online
 ### Water safety status LED
 
 ```text
-pin: GPIO13
+pin: GPIO16
 active: HIGH
 ```
 
@@ -139,7 +167,7 @@ Water-low switch changed: WATER LOW
 ### Pump local button
 
 ```text
-pin: GPIO18
+pin: GPIO19
 active: LOW
 ```
 
@@ -153,7 +181,7 @@ if requested ON and water_low=true -> ignore and keep pump OFF
 ### COB local button
 
 ```text
-pin: GPIO19
+pin: GPIO18
 active: LOW
 ```
 
@@ -161,6 +189,20 @@ Behavior:
 
 ```text
 press -> toggle COB light
+```
+
+### Wi-Fi reset/setup button
+
+```text
+pin: GPIO23
+active: LOW
+hold time: 3 seconds
+```
+
+Behavior:
+
+```text
+hold to GND for 3 seconds -> clear saved Wi-Fi -> start setup hotspot
 ```
 
 ## RTC module
@@ -204,8 +246,8 @@ Safe boot OFF must not be pushed to Laravel until a trusted cached or fresh conf
 [ ] actual pump MOSFET/relay electrical behavior under load
 [ ] actual COB driver behavior and brightness/PWM plan
 [ ] final water-level sensor/switch wiring
-[ ] network/server LED visibility and blink timing
-[ ] water safety LED visibility
+[ ] network/server LED visibility and blink timing on GPIO17
+[ ] water safety LED visibility on GPIO16
 [ ] long-run NeoPixel power stability
 [ ] waterproofing and enclosure cable routing
 ```
