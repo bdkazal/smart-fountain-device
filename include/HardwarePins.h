@@ -53,23 +53,29 @@
 
 // Status indicator LEDs.
 // Wiring:
-// GPIO23 -> resistor -> network/server LED -> GND
-// GPIO13 -> resistor -> water safety LED -> GND
+// GPIO17 -> resistor -> network/server LED -> GND
+// GPIO16 -> resistor -> water safety LED -> GND
 // ACTIVE_HIGH means GPIO HIGH turns the indicator LED ON.
-#define NET_STATUS_LED_PIN 23
+#define NET_STATUS_LED_PIN 17
 #define NET_STATUS_LED_ACTIVE_HIGH 1
-#define WATER_SAFETY_LED_PIN 13
+#define WATER_SAFETY_LED_PIN 16
 #define WATER_SAFETY_LED_ACTIVE_HIGH 1
 #define NET_STATUS_FAST_BLINK_MS 250
 #define NET_STATUS_SLOW_BLINK_MS 1000
 
+// Wi-Fi reset/setup button.
+// Wiring: GPIO23 -> Wi-Fi reset/setup button -> GND.
+// Internal pull-up keeps the pin HIGH when the button is not pressed.
+// Hold to GND for 3 seconds to clear saved Wi-Fi and start setup hotspot.
+#define WIFI_RESET_BUTTON_PIN 23
+
 // Local physical control buttons.
 // Wiring:
-// GPIO18 -> pump button -> GND
-// GPIO19 -> COB button  -> GND
+// GPIO19 -> pump button -> GND
+// GPIO18 -> COB button  -> GND
 // Internal pull-up keeps each pin HIGH when the button is not pressed.
-#define LOCAL_PUMP_BUTTON_PIN 18
-#define LOCAL_COB_BUTTON_PIN 19
+#define LOCAL_PUMP_BUTTON_PIN 19
+#define LOCAL_COB_BUTTON_PIN 18
 #define LOCAL_BUTTONS_ACTIVE_LOW 1
 #define LOCAL_BUTTON_DEBOUNCE_MS 50
 
