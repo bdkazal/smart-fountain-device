@@ -30,7 +30,7 @@
 #define PUMP_LOW_ASSIST_INTERVAL_MS 2000
 
 // Float switch / test switch input.
-// Suggested first prototype pin: GPIO1.
+// Suggested ESP32 DevKit V1 pin: GPIO32.
 // Wiring: GPIO -> switch -> GND, using ESP32 internal pull-up.
 // ACTIVE_LOW means closed switch reads LOW and becomes water_low=true.
 #define WATER_LEVEL_SWITCH_PIN -1
@@ -39,9 +39,9 @@
 #define WATER_LEVEL_SWITCH_DEBOUNCE_MS 150
 
 // Status indicator LEDs.
-// Suggested ESP32 DevKit V1 pins:
-// - network/server status LED: GPIO23
-// - water safety status LED: GPIO13
+// Suggested ESP32 DevKit V1 right-side pins:
+// - network/server status LED: GPIO17
+// - water safety status LED: GPIO16
 // Wiring for ACTIVE_HIGH: GPIO -> resistor -> LED -> GND.
 // Set to -1 to disable.
 #define NET_STATUS_LED_PIN -1
@@ -50,6 +50,18 @@
 #define WATER_SAFETY_LED_ACTIVE_HIGH 1
 #define NET_STATUS_FAST_BLINK_MS 250
 #define NET_STATUS_SLOW_BLINK_MS 1000
+
+// Local controller-box buttons.
+// Suggested ESP32 DevKit V1 right-side pins:
+// - pump local button: GPIO19
+// - COB local button: GPIO18
+// - Wi-Fi reset/setup button: GPIO23
+// Wiring: GPIO -> button -> GND, using ESP32 internal pull-up.
+#define LOCAL_PUMP_BUTTON_PIN -1
+#define LOCAL_COB_BUTTON_PIN -1
+#define WIFI_RESET_BUTTON_PIN 23
+#define LOCAL_BUTTONS_ACTIVE_LOW 1
+#define LOCAL_BUTTON_DEBOUNCE_MS 50
 
 // COB light PWM output.
 // TBD: choose final ESP32-C3 GPIO and current-limited driver circuit.
