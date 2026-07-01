@@ -1,5 +1,7 @@
 # API and State Flow
 
+Last updated: 2026-07-01
+
 This document explains how the Smart Fountain firmware communicates with Laravel.
 
 ## Backend repository
@@ -8,9 +10,20 @@ This document explains how the Smart Fountain firmware communicates with Laravel
 bdkazal/biztola-iot-platform
 ```
 
+## Current transport model
+
+Smart Fountain uses both REST and MQTT.
+
+```text
+REST = config, fallback commands, ACK, state sync, heartbeat
+MQTT = fast dashboard command delivery
+```
+
+MQTT does not replace REST.
+
 ## Authentication
 
-Every firmware request must include:
+Every firmware REST request must include:
 
 ```http
 X-DEVICE-KEY: <device_api_key>
@@ -27,7 +40,7 @@ The device identifies itself using:
 }
 ```
 
-## Main endpoints
+## Main REST endpoints
 
 ```http
 GET  /api/device/config
@@ -38,6 +51,27 @@ POST /api/device/heartbeat
 ```
 
 For Smart Fountain, `/api/device/state` is the important endpoint because it reports actual output state and readings.
+
+## MQTT command topic
+
+```text
+biztola/v1/devices/{DEVICE_UUID}/commands
+```
+
+MQTT command payloads use this envelope:
+
+```json
+{
+  "schema": "biztola.command.v1",
+  "command_id": 1076,
+  "device_uuid": "...",
+  "command_type": "output_set",
+  "payload": {},
+  "issued_at": "2026-07-01T19:20:15+06:00"
+}
+```
+
+Firmware validates the envelope and converts it into the same command shape used by REST polling.
 
 ## Config fetch
 
@@ -81,7 +115,20 @@ timezone_offset_minutes = local schedule interpretation
 RTC stores UTC, not local time
 ```
 
-## Command polling
+## Command delivery
+
+There are now two command delivery paths.
+
+Fast path:
+
+```text
+Laravel publishes MQTT
+-> ESP32 receives command topic
+-> ESP32 validates payload
+-> ESP32 processes command
+```
+
+Fallback path:
 
 ```http
 GET /api/device/commands?device_uuid=<uuid>
@@ -108,11 +155,11 @@ scene_apply
 When command exists:
 
 ```text
-1. ESP32 receives command.
-2. ESP32 ACKs acknowledged.
+1. ESP32 receives command through MQTT or REST polling.
+2. ESP32 ACKs acknowledged through REST.
 3. ESP32 applies command locally.
-4. ESP32 ACKs executed or failed.
-5. ESP32 POSTs actual state.
+4. ESP32 ACKs executed or failed through REST.
+5. ESP32 POSTs actual state through REST.
 ```
 
 For persistent-state devices:
@@ -125,10 +172,11 @@ It does not mean the output finished running.
 
 ## output_set
 
-Example:
+Example REST command shape after MQTT envelope conversion:
 
 ```json
 {
+  "id": 1076,
   "command_type": "output_set",
   "payload": {
     "output": "rgb_light",
@@ -315,3 +363,5 @@ Command payload = request
 ACK executed = request applied
 POST /api/device/state = actual hardware truth
 ```
+
+This is still true when the command arrived through MQTT.
