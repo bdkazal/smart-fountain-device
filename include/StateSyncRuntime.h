@@ -49,6 +49,7 @@ private:
   bool localSyncPending = false;
   unsigned long localSyncRetryAt = 0;
 
+  String lastPostedStatePayload = "";
   const char *pendingSource = "local_button";
   const char *currentSource = "device_state";
 };
