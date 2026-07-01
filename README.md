@@ -99,6 +99,23 @@ GPIO22 = RTC SCL
 
 ## Quick setup
 
+Runtime defaults are committed in:
+
+```text
+include/DeviceRuntimeConfig.h
+```
+
+That file contains non-secret local dev settings such as:
+
+```text
+API_BASE_URL = http://192.168.0.113:8000
+MQTT_HOST = 192.168.0.113
+MQTT_PORT = 1883
+MQTT_ENABLED = true
+```
+
+Real secrets stay local in `include/DeviceSecrets.h`, which is ignored by Git.
+
 Copy secrets:
 
 ```bash
@@ -109,13 +126,17 @@ Edit `include/DeviceSecrets.h`:
 
 ```cpp
 #define WIFI_SSID "YOUR_WIFI_NAME"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
-#define API_BASE_URL "http://192.168.0.xxx:8000"
+#define WIFI_PASSWORD "YOUR_WIFI_SECRET"
+
 #define DEVICE_UUID "YOUR_SMART_FOUNTAIN_DEVICE_UUID"
-#define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_API_KEY"
+#define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_SECRET"
+
+#define MQTT_PASSWORD "YOUR_DEVICE_MQTT_SECRET"
+
+#include "DeviceRuntimeConfig.h"
 ```
 
-Do **not** use `127.0.0.1` for `API_BASE_URL` from ESP32. Use the Mac/Laravel server LAN IP.
+Do **not** use `127.0.0.1` for Laravel or MQTT from ESP32. Use the Mac/Laravel/MQTT broker LAN IP.
 
 Run Laravel on the LAN:
 
