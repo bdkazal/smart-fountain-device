@@ -63,7 +63,16 @@ public:
   );
 
 private:
+  static const int PROCESSED_COMMAND_HISTORY_SIZE = 8;
+
   unsigned long lastNoCommandLogAt = 0;
+  unsigned long lastRestCommandPollAt = 0;
+  int processedCommandIds[PROCESSED_COMMAND_HISTORY_SIZE] = {0};
+  int processedCommandHistoryIndex = 0;
+
+  bool shouldRunRestCommandPoll(unsigned long now);
+  bool wasRecentlyProcessed(int commandId) const;
+  void rememberProcessedCommand(int commandId);
 
   bool ackCommand(
     bool wifiConnected,
