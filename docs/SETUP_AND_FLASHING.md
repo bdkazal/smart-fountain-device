@@ -22,7 +22,40 @@ git clone https://github.com/bdkazal/smart-fountain-device.git
 cd smart-fountain-device
 ```
 
-## Secrets file
+## Runtime config and secrets
+
+The firmware now separates non-secret runtime defaults from real secrets.
+
+Committed to Git:
+
+```text
+include/DeviceRuntimeConfig.h
+```
+
+This file contains non-secret local development defaults:
+
+```text
+API_BASE_URL = http://192.168.0.113:8000
+MQTT_ENABLED = true
+MQTT_HOST = 192.168.0.113
+MQTT_PORT = 1883
+MQTT_TOPIC_PREFIX = biztola/v1
+```
+
+If your Mac IP changes, edit `include/DeviceRuntimeConfig.h` and update both:
+
+```text
+API_BASE_URL
+MQTT_HOST
+```
+
+Ignored by Git:
+
+```text
+include/DeviceSecrets.h
+```
+
+This file contains real local secrets such as Wi-Fi credentials, device API key, and MQTT secret.
 
 Copy the example secrets file:
 
@@ -40,29 +73,35 @@ Required values:
 
 ```cpp
 #define WIFI_SSID "YOUR_WIFI_NAME"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
-#define API_BASE_URL "http://192.168.0.xxx:8000"
+#define WIFI_PASSWORD "YOUR_WIFI_SECRET"
+
 #define DEVICE_UUID "YOUR_SMART_FOUNTAIN_DEVICE_UUID"
-#define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_API_KEY"
+#define DEVICE_API_KEY "YOUR_SMART_FOUNTAIN_DEVICE_SECRET"
+
+#define MQTT_PASSWORD "YOUR_DEVICE_MQTT_SECRET"
+
+#include "DeviceRuntimeConfig.h"
 ```
 
 Important:
 
 ```text
-Do not use 127.0.0.1 for API_BASE_URL.
-The ESP32 must use the Laravel server LAN IP.
+Do not use 127.0.0.1 for Laravel or MQTT from ESP32.
+The ESP32 must use the Mac/server/broker LAN IP.
 ```
 
-Correct example:
+Correct examples:
 
 ```cpp
 #define API_BASE_URL "http://192.168.0.113:8000"
+#define MQTT_HOST "192.168.0.113"
 ```
 
-Wrong example:
+Wrong examples:
 
 ```cpp
 #define API_BASE_URL "http://127.0.0.1:8000"
+#define MQTT_HOST "127.0.0.1"
 ```
 
 ## Laravel server
@@ -74,6 +113,23 @@ php artisan serve --host=0.0.0.0 --port=8000
 ```
 
 The ESP32 must be on the same network and must be able to reach the Mac/server LAN IP.
+
+## MQTT broker
+
+For local MQTT testing, Mosquitto should be reachable from the ESP32 on the Mac LAN IP:
+
+```text
+192.168.0.113:1883
+```
+
+Expected boot messages when MQTT is enabled and reachable:
+
+```text
+MQTT command runtime ready. Broker: 192.168.0.113:1883
+MQTT command topic: biztola/v1/devices/{DEVICE_UUID}/commands
+MQTT connected.
+MQTT subscribed: biztola/v1/devices/{DEVICE_UUID}/commands
+```
 
 ## Build
 
@@ -120,6 +176,8 @@ Timeline range count: 3
 POST /api/device/state
 State HTTP status: 200
 State synced.
+MQTT connected.
+MQTT subscribed: biztola/v1/devices/{DEVICE_UUID}/commands
 Cloud mode: ONLINE - Laravel reachable, dashboard/API control active.
 ```
 
@@ -165,6 +223,22 @@ pio run -t clean
 
 ## Common issues
 
+### MQTT command runtime disabled
+
+Usually means `include/DeviceSecrets.h` does not include the committed runtime config file.
+
+Check that the bottom of `include/DeviceSecrets.h` contains:
+
+```cpp
+#include "DeviceRuntimeConfig.h"
+```
+
+Also check `include/DeviceRuntimeConfig.h` has:
+
+```cpp
+#define MQTT_ENABLED true
+```
+
 ### Config HTTP status is -1
 
 Check:
@@ -176,6 +250,19 @@ ESP32 and Mac/server are on same Wi-Fi/LAN
 firewall is not blocking port 8000
 DEVICE_UUID is correct
 DEVICE_API_KEY is correct
+```
+
+### MQTT connect failed
+
+Check:
+
+```text
+Mosquitto is running
+MQTT_HOST uses the Mac/broker LAN IP
+ESP32 and Mac/broker are on the same Wi-Fi/LAN
+MQTT username matches the device UUID
+MQTT secret matches the broker user
+ACL allows the device user to read its command topic
 ```
 
 ### HTTP 401
