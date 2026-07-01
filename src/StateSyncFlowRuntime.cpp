@@ -57,6 +57,14 @@ bool StateSyncFlowRuntime::postState(
     statusCode
   );
 
+  if (statusCode == 204 && response.length() == 0)
+  {
+    // 204 is used internally by StateSyncRuntime to mean no HTTP request was
+    // needed because the payload is unchanged. Do not reset API health from a
+    // skipped local optimization.
+    return true;
+  }
+
   Serial.print("State HTTP status: ");
   Serial.println(statusCode);
 
