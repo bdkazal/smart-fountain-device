@@ -13,7 +13,8 @@
 // If your Mac IP changes, update API_BASE_URL and MQTT_HOST here.
 
 #ifndef API_BASE_URL
-#define API_BASE_URL "http://192.168.0.113:8000"
+// #define API_BASE_URL "http://192.168.0.113:8000"
+#define API_BASE_URL "https://iot.biztola.com"
 #endif
 
 #ifndef MQTT_ENABLED
@@ -21,7 +22,8 @@
 #endif
 
 #ifndef MQTT_HOST
-#define MQTT_HOST "192.168.0.113"
+// #define MQTT_HOST "192.168.0.113"
+#define MQTT_HOST "server.biztola.com"
 #endif
 
 #ifndef MQTT_PORT
@@ -41,5 +43,6 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "smart-fountain-dev-0.1"
+// #define FIRMWARE_VERSION "smart-fountain-dev-0.1"
+#define FIRMWARE_VERSION "smart-fountain-live-0.1"
 #endif
