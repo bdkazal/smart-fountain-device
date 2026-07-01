@@ -1,5 +1,62 @@
 #include "CommandFlowRuntime.h"
 
+#include "DeviceSecrets.h"
+
+#ifndef MQTT_ENABLED
+#define MQTT_ENABLED false
+#endif
+
+#ifndef MQTT_CONNECTED_REST_COMMAND_POLL_INTERVAL_MS
+#define MQTT_CONNECTED_REST_COMMAND_POLL_INTERVAL_MS 60000
+#endif
+
+bool CommandFlowRuntime::shouldRunRestCommandPoll(unsigned long now)
+{
+  if (!MQTT_ENABLED)
+  {
+    return true;
+  }
+
+  if (lastRestCommandPollAt != 0 && now - lastRestCommandPollAt < MQTT_CONNECTED_REST_COMMAND_POLL_INTERVAL_MS)
+  {
+    return false;
+  }
+
+  lastRestCommandPollAt = now;
+  Serial.println("REST command fallback poll while MQTT command transport is enabled.");
+
+  return true;
+}
+
+bool CommandFlowRuntime::wasRecentlyProcessed(int commandId) const
+{
+  if (commandId <= 0)
+  {
+    return false;
+  }
+
+  for (int i = 0; i < PROCESSED_COMMAND_HISTORY_SIZE; i++)
+  {
+    if (processedCommandIds[i] == commandId)
+    {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+void CommandFlowRuntime::rememberProcessedCommand(int commandId)
+{
+  if (commandId <= 0 || wasRecentlyProcessed(commandId))
+  {
+    return;
+  }
+
+  processedCommandIds[processedCommandHistoryIndex] = commandId;
+  processedCommandHistoryIndex = (processedCommandHistoryIndex + 1) % PROCESSED_COMMAND_HISTORY_SIZE;
+}
+
 bool CommandFlowRuntime::pollAndProcess(
   unsigned long now,
   unsigned long noCommandLogIntervalMs,
@@ -29,6 +86,11 @@ bool CommandFlowRuntime::pollAndProcess(
   }
 
   if (apiServerOffline)
+  {
+    return false;
+  }
+
+  if (!shouldRunRestCommandPoll(now))
   {
     return false;
   }
@@ -251,6 +313,15 @@ void CommandFlowRuntime::processCommand(
     Serial.println("Invalid command shape. Ignoring.");
     return;
   }
+
+  if (wasRecentlyProcessed(commandId))
+  {
+    Serial.print("Duplicate command ignored. command_id=");
+    Serial.println(commandId);
+    return;
+  }
+
+  rememberProcessedCommand(commandId);
 
   Serial.println();
   Serial.print("Processing command #");
