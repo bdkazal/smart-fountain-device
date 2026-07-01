@@ -61,13 +61,28 @@ bool StateSyncRuntime::postState(
 {
   String payload = buildStatePayload(source, outputs, readings, firmwareVersion);
 
+  if (payload == lastPostedStatePayload)
+  {
+    response = "";
+    statusCode = 204;
+    Serial.println("State sync skipped: payload unchanged since last successful sync.");
+    return true;
+  }
+
   Serial.println();
   Serial.print("POST ");
   Serial.println(httpDeviceApi.stateUrl());
   Serial.print("State payload: ");
   Serial.println(payload);
 
-  return httpDeviceApi.postState(payload, response, statusCode);
+  bool posted = httpDeviceApi.postState(payload, response, statusCode);
+
+  if (posted)
+  {
+    lastPostedStatePayload = payload;
+  }
+
+  return posted;
 }
 
 void StateSyncRuntime::queueLocalStateSync(const char *source)
