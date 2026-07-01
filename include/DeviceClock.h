@@ -27,11 +27,14 @@ public:
 
 private:
   bool timeValid = false;
+  bool rtcSyncCheckedAfterBoot = false;
+  unsigned long lastRtcSyncCheckAt = 0;
   unsigned long syncedAtMillis = 0;
   unsigned long syncedUtcEpochSeconds = 0;
   long tzOffsetMinutes = 0;
   String timeSource = "NONE";
 
+  bool shouldCheckRtcSync(unsigned long now) const;
   bool parseServerTimeUtc(const String &serverTimeUtc, unsigned long &epochSeconds) const;
   bool isReasonableEpoch(unsigned long epochSeconds) const;
   bool isLeapYear(int year) const;
