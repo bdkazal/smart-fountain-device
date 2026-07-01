@@ -329,17 +329,6 @@ void CommandFlowRuntime::processCommand(
   Serial.print(" type=");
   Serial.println(commandType);
 
-  ackCommand(
-    wifiConnected,
-    httpDeviceApi,
-    commandRuntime,
-    commandId,
-    "acknowledged",
-    nullptr,
-    registerApiSuccess,
-    registerApiFailure
-  );
-
   bool applied = false;
   String type = commandType;
 
@@ -396,7 +385,21 @@ void CommandFlowRuntime::processCommand(
     }
 
     stateSyncRuntime.rememberOutputSource("device_state");
+  }
 
+  ackCommand(
+    wifiConnected,
+    httpDeviceApi,
+    commandRuntime,
+    commandId,
+    "acknowledged",
+    nullptr,
+    registerApiSuccess,
+    registerApiFailure
+  );
+
+  if (applied)
+  {
     ackCommand(
       wifiConnected,
       httpDeviceApi,
