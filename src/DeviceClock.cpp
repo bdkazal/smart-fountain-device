@@ -17,7 +17,14 @@ bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOf
 
   if (synced)
   {
-    beginRtcClock();
+    // Do not reinitialize the RTC after every Laravel config refresh.
+    // beginRtcClock() is guarded and will only initialize hardware once if it
+    // has not already been initialized during the boot/cache path.
+    if (!isRtcAvailable())
+    {
+      beginRtcClock();
+    }
+
     saveUtcEpochToRtc(utcEpochSeconds());
   }
 
