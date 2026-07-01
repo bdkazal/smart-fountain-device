@@ -31,18 +31,39 @@ Laravel dashboard
 biztola/v1/devices/{DEVICE_UUID}/commands
 ```
 
-## Device settings
+## Config files
 
-Add these to local `include/DeviceSecrets.h` after copying the example file:
+MQTT config is split across two files.
+
+Committed non-secret defaults:
+
+```text
+include/DeviceRuntimeConfig.h
+```
+
+Current local lab defaults in that file:
 
 ```cpp
 #define MQTT_ENABLED true
-#define MQTT_HOST "YOUR_BROKER_LAN_IP"
+#define MQTT_HOST "192.168.0.113"
 #define MQTT_PORT 1883
 #define MQTT_USERNAME DEVICE_UUID
-#define MQTT_PASSWORD "YOUR_DEVICE_MQTT_SECRET"
 #define MQTT_CLIENT_ID DEVICE_UUID
 #define MQTT_TOPIC_PREFIX "biztola/v1"
+```
+
+Local secret only:
+
+```text
+include/DeviceSecrets.h
+```
+
+The secret file should contain:
+
+```cpp
+#define MQTT_PASSWORD "YOUR_DEVICE_MQTT_SECRET"
+
+#include "DeviceRuntimeConfig.h"
 ```
 
 From ESP32, do not use `127.0.0.1` for `MQTT_HOST`. Use the Mac or broker LAN IP.
@@ -50,7 +71,7 @@ From ESP32, do not use `127.0.0.1` for `MQTT_HOST`. Use the Mac or broker LAN IP
 ## Expected serial messages
 
 ```text
-MQTT command runtime ready. Broker: YOUR_BROKER_LAN_IP:1883
+MQTT command runtime ready. Broker: 192.168.0.113:1883
 MQTT command topic: biztola/v1/devices/{DEVICE_UUID}/commands
 MQTT connected.
 MQTT subscribed: biztola/v1/devices/{DEVICE_UUID}/commands
@@ -60,6 +81,26 @@ Processing command #... type=output_set
 ACK command ... as acknowledged
 ACK command ... as executed
 State synced.
+```
+
+## If MQTT shows disabled
+
+If the serial monitor shows:
+
+```text
+MQTT command runtime disabled.
+```
+
+Check that `include/DeviceSecrets.h` includes the committed runtime config file:
+
+```cpp
+#include "DeviceRuntimeConfig.h"
+```
+
+Also check that `include/DeviceRuntimeConfig.h` has:
+
+```cpp
+#define MQTT_ENABLED true
 ```
 
 ## Safety behavior
