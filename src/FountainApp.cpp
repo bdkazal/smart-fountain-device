@@ -22,6 +22,7 @@
 #include "HardwareOutputs.h"
 #include "LocalControls.h"
 #include "LocalRuntime.h"
+#include "MqttCommandRuntime.h"
 #include "SetupPortal.h"
 #include "StateSyncRuntime.h"
 #include "StateSyncFlowRuntime.h"
@@ -107,6 +108,7 @@ FountainOutputs fountainOutputs;
 HardwareOutputs hardwareOutputs;
 LocalControls localControls;
 LocalRuntime localRuntime;
+MqttCommandRuntime mqttCommandRuntime;
 StateSyncRuntime stateSyncRuntime;
 StateSyncFlowRuntime stateSyncFlowRuntime;
 StatusIndicators statusIndicators;
@@ -118,6 +120,7 @@ void applySafetyAndSyncHardware();
 void updateStatusIndicators();
 bool processLocalControls();
 bool processDailyTimeline();
+bool processMqttCommands();
 bool connectWifi(bool allowDevelopmentFallback = true);
 void registerApiSuccess(const char *requestName);
 void registerApiFailure(const char *requestName, int statusCode);
@@ -432,6 +435,93 @@ bool pollCommands()
   );
 }
 
+bool processMqttCommands()
+{
+  String topic;
+  String message;
+
+  if (!mqttCommandRuntime.takePendingCommand(topic, message))
+  {
+    return false;
+  }
+
+  Serial.println();
+  Serial.print("MQTT command topic: ");
+  Serial.println(topic);
+
+  JsonDocument mqttDoc;
+  DeserializationError error = deserializeJson(mqttDoc, message);
+
+  if (error)
+  {
+    Serial.print("MQTT command JSON parse failed: ");
+    Serial.println(error.c_str());
+    return false;
+  }
+
+  JsonObject mqttCommand = mqttDoc.as<JsonObject>();
+  const char *schema = mqttCommand["schema"] | "";
+
+  if (String(schema) != "biztola.command.v1")
+  {
+    Serial.print("MQTT command ignored: unsupported schema=");
+    Serial.println(schema);
+    return false;
+  }
+
+  const char *deviceUuid = mqttCommand["device_uuid"] | "";
+
+  if (String(deviceUuid) != DEVICE_UUID)
+  {
+    Serial.println("MQTT command ignored: device_uuid mismatch.");
+    return false;
+  }
+
+  int commandId = mqttCommand["command_id"] | 0;
+
+  if (commandId <= 0)
+  {
+    commandId = mqttCommand["id"] | 0;
+  }
+
+  const char *commandType = mqttCommand["command_type"] | "";
+  JsonObject commandPayload = mqttCommand["payload"].as<JsonObject>();
+
+  if (commandId <= 0 || String(commandType).length() == 0 || commandPayload.isNull())
+  {
+    Serial.println("MQTT command ignored: invalid command shape.");
+    return false;
+  }
+
+  JsonDocument commandDoc;
+  JsonObject command = commandDoc.to<JsonObject>();
+  command["id"] = commandId;
+  command["command_type"] = commandType;
+  command["payload"].set(commandPayload);
+
+  commandFlowRuntime.processCommand(
+    command,
+    isWifiConnected(),
+    httpDeviceApi,
+    commandRuntime,
+    fountainOutputs,
+    dailyTimelineRuntime,
+    deviceClock,
+    dailyTimeline,
+    outputs,
+    readings,
+    stateSyncRuntime,
+    registerApiSuccess,
+    registerApiFailure,
+    updateWaterReadings,
+    applySafetyAndSyncHardware,
+    markOutputStateTrusted,
+    postState
+  );
+
+  return true;
+}
+
 void runNetworkRuntimeOnce(unsigned long now)
 {
   if (isSetupPortalActive())
@@ -441,6 +531,8 @@ void runNetworkRuntimeOnce(unsigned long now)
 
   if (!isWifiConnected())
   {
+    mqttCommandRuntime.loop(false);
+
     if (now - lastWifiRetryAt >= WIFI_RETRY_INTERVAL_MS)
     {
       Serial.println("Wi-Fi offline. Retrying connection from network task...");
@@ -448,6 +540,14 @@ void runNetworkRuntimeOnce(unsigned long now)
       lastWifiRetryAt = now;
     }
 
+    return;
+  }
+
+  mqttCommandRuntime.loop(true);
+
+  if (!apiHealth.isServerOffline() && processMqttCommands())
+  {
+    logCloudModeIfChanged();
     return;
   }
 
@@ -580,6 +680,7 @@ void FountainApp::begin()
   apiHealth.begin(API_OFFLINE_FAILURE_THRESHOLD, API_PROBE_INTERVAL_MS);
   apiClient.begin(API_BASE_URL, DEVICE_API_KEY);
   httpDeviceApi.begin(&apiClient, HTTP_TIMEOUT_MS, COMMAND_HTTP_TIMEOUT_MS);
+  mqttCommandRuntime.begin();
   hardwareOutputs.begin();
   statusIndicators.begin();
   waterLevelSensor.begin();
