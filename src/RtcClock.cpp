@@ -23,6 +23,7 @@ namespace
 {
 RTC_DS3231 rtc;
 
+bool rtcInitializationAttempted = false;
 bool rtcAvailable = false;
 bool rtcTimeValid = false;
 String rtcStatusText = "RTC not initialized";
@@ -52,6 +53,13 @@ void printDateTime(const DateTime &dateTime)
 
 void beginRtcClock()
 {
+  if (rtcInitializationAttempted)
+  {
+    return;
+  }
+
+  rtcInitializationAttempted = true;
+
   Serial.println();
   Serial.println("Initializing DS3231/HW-111 RTC...");
   Serial.print("RTC SDA GPIO: ");
