@@ -42,6 +42,26 @@ public:
     CommandFlowPostStateCallback postState
   );
 
+  void processCommand(
+    JsonObject command,
+    bool wifiConnected,
+    HttpDeviceApi &httpDeviceApi,
+    CommandRuntime &commandRuntime,
+    FountainOutputs &fountainOutputs,
+    DailyTimelineRuntime &dailyTimelineRuntime,
+    DeviceClock &deviceClock,
+    FountainDailyTimeline &dailyTimeline,
+    FountainOutputState &outputs,
+    FountainReadings &readings,
+    StateSyncRuntime &stateSyncRuntime,
+    CommandFlowApiSuccessCallback registerApiSuccess,
+    CommandFlowApiFailureCallback registerApiFailure,
+    CommandFlowVoidCallback updateWaterReadings,
+    CommandFlowVoidCallback applySafetyAndSyncHardware,
+    CommandFlowTrustCallback markOutputStateTrusted,
+    CommandFlowPostStateCallback postState
+  );
+
 private:
   unsigned long lastNoCommandLogAt = 0;
 
@@ -74,25 +94,5 @@ private:
     FountainReadings &readings,
     CommandFlowVoidCallback updateWaterReadings,
     CommandFlowVoidCallback applySafetyAndSyncHardware
-  );
-
-  void processCommand(
-    JsonObject command,
-    bool wifiConnected,
-    HttpDeviceApi &httpDeviceApi,
-    CommandRuntime &commandRuntime,
-    FountainOutputs &fountainOutputs,
-    DailyTimelineRuntime &dailyTimelineRuntime,
-    DeviceClock &deviceClock,
-    FountainDailyTimeline &dailyTimeline,
-    FountainOutputState &outputs,
-    FountainReadings &readings,
-    StateSyncRuntime &stateSyncRuntime,
-    CommandFlowApiSuccessCallback registerApiSuccess,
-    CommandFlowApiFailureCallback registerApiFailure,
-    CommandFlowVoidCallback updateWaterReadings,
-    CommandFlowVoidCallback applySafetyAndSyncHardware,
-    CommandFlowTrustCallback markOutputStateTrusted,
-    CommandFlowPostStateCallback postState
   );
 };
