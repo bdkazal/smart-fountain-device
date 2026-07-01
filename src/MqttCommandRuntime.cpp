@@ -1,5 +1,7 @@
 #include "MqttCommandRuntime.h"
 
+#include <cstring>
+
 #include "DeviceSecrets.h"
 
 #ifndef MQTT_ENABLED
