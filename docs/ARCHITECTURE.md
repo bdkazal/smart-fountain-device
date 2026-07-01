@@ -1,6 +1,8 @@
 # Firmware Architecture
 
-This document explains the current Smart Fountain firmware architecture after the runtime refactor chain through PR #9.
+Last updated: 2026-07-01
+
+This document explains the current Smart Fountain firmware architecture after the runtime refactor chain and MQTT command subscriber work.
 
 ## Architecture goal
 
@@ -32,13 +34,14 @@ src/FountainApp.cpp
 
 `FountainApp` coordinates boot and runtime flow.
 
-It still owns high-level decisions such as:
+It owns high-level decisions such as:
 
 ```text
 boot order
 when to fetch config
 when to post state
-when to poll commands
+when to run MQTT loop
+when to poll REST commands
 when to probe API recovery
 when offline timeline is allowed to apply
 when hardware should be synced
@@ -53,12 +56,29 @@ It should not permanently own low-level parsing, transport, button logic, or har
 | ApiHealth | `include/ApiHealth.h`, `src/ApiHealth.cpp` | Tracks repeated API failures and server-offline mode. |
 | CloudRuntime | `include/CloudRuntime.h`, `src/CloudRuntime.cpp` | Classifies API failures and logs ONLINE/OFFLINE cloud mode. |
 | HttpDeviceApi | `include/HttpDeviceApi.h`, `src/HttpDeviceApi.cpp` | HTTP transport for config, state, commands, and ACKs. |
+| MqttCommandRuntime | `include/MqttCommandRuntime.h`, `src/MqttCommandRuntime.cpp` | MQTT broker connection, command topic subscription, and pending raw message storage. |
+| MqttCommandFlowRuntime | `include/MqttCommandFlowRuntime.h`, `src/MqttCommandFlowRuntime.cpp` | Parses MQTT command envelope, validates schema/device UUID, and forwards to shared command flow. |
 | StateSyncRuntime | `include/StateSyncRuntime.h`, `src/StateSyncRuntime.cpp` | Builds state payloads, posts state, tracks queued local sync. |
-| CommandRuntime | `include/CommandRuntime.h`, `src/CommandRuntime.cpp` | Fetches commands, sends ACKs, applies output/scene command payloads. |
+| CommandRuntime | `include/CommandRuntime.h`, `src/CommandRuntime.cpp` | Fetches REST commands, sends ACKs, applies output/scene command payloads. |
+| CommandFlowRuntime | `include/CommandFlowRuntime.h`, `src/CommandFlowRuntime.cpp` | Shared command execution flow used by REST polling and MQTT commands. |
 | ConfigRuntime | `include/ConfigRuntime.h`, `src/ConfigRuntime.cpp` | Fetches/parses config and manages compact config cache helpers. |
 | LocalRuntime | `include/LocalRuntime.h`, `src/LocalRuntime.cpp` | Handles local pump/COB button decisions. |
 | WifiRuntime | `include/WifiRuntime.h`, `src/WifiRuntime.cpp` | Handles Wi-Fi connection attempts and stored/development credential fallback. |
 | OfflineTimeline | `include/OfflineTimeline.h`, `src/OfflineTimeline.cpp` | Tracks active cached timeline range and applies cached outputs while offline. |
+
+## MQTT boundary
+
+MQTT is only a delivery path.
+
+```text
+MqttCommandRuntime receives raw MQTT message.
+MqttCommandFlowRuntime validates and adapts it.
+CommandFlowRuntime applies it.
+```
+
+Do not duplicate output or scene application logic for MQTT.
+
+REST polling and MQTT commands must both reach the same command execution path so ACK, state sync, timeline satisfaction, and water safety remain consistent.
 
 ## Product modules
 
@@ -102,6 +122,7 @@ FountainApp::begin()
   fetch fresh config
   sync server time / RTC
   save compact config cache
+  initialize MQTT command runtime
   post boot state
 ```
 
@@ -114,9 +135,11 @@ FountainApp::update()
   enforce safety
   log cloud mode changes
   render/update outputs
+  if Wi-Fi connected: run MQTT loop
+  if MQTT command pending and API usable: process through shared command flow
   if API offline: probe recovery
   if local sync pending: try sync when allowed
-  if online: poll commands
+  if online: poll REST commands as fallback
   periodically post device_state
   check offline timeline if cloud/API unavailable
 ```
@@ -150,6 +173,9 @@ Do not mix these responsibilities:
 
 ```text
 HTTP transport belongs in HttpDeviceApi.
+MQTT transport belongs in MqttCommandRuntime.
+MQTT envelope parsing belongs in MqttCommandFlowRuntime.
+Command execution belongs in CommandFlowRuntime.
 API failure policy belongs in CloudRuntime/ApiHealth.
 State payload construction belongs in StateSyncRuntime.
 Local button decisions belong in LocalRuntime.
@@ -166,9 +192,10 @@ Only do these when a clear need exists:
 Config orchestration: move more fetch/cache/RTC boot flow out of FountainApp.
 App lifecycle: split begin/update into smaller lifecycle helpers.
 API responsiveness: move blocking HTTP work into shorter timeouts or FreeRTOS task.
-MQTT: future feature, not current priority.
+MQTT queueing: replace one pending MQTT message with a small queue if real use needs it.
+Presence: optionally add MQTT presence/last-will later.
 ```
 
 ## Current caution
 
-Arduino `HTTPClient` is blocking. During an active HTTP request, local buttons can pause briefly. Current mitigation keeps recovery probe timeout shorter. A full fix should be a separate architecture PR, not mixed with timeline testing.
+Arduino `HTTPClient` is blocking. During an active HTTP request, local buttons can pause briefly. Current mitigation keeps recovery probe timeout shorter. A full fix should be a separate architecture PR, not mixed with timeline or MQTT documentation work.
