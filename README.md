@@ -26,6 +26,7 @@ Full documentation is kept in [`docs/`](docs/).
 | [`docs/DAILY_TIMELINE_OPERATION.md`](docs/DAILY_TIMELINE_OPERATION.md) | Online Laravel schedule vs offline cached timeline behavior. |
 | [`docs/DAILY_TIMELINE_TESTING.md`](docs/DAILY_TIMELINE_TESTING.md) | Real-device schedule/timeline test guide. |
 | [`docs/TESTING_CHECKLIST.md`](docs/TESTING_CHECKLIST.md) | Firmware smoke-test checklist. |
+| [`docs/MQTT_COMMANDS.md`](docs/MQTT_COMMANDS.md) | MQTT command subscriber setup and behavior. |
 
 Note: the Laravel repository uses uppercase `Docs/`. This firmware repository uses lowercase `docs/`.
 
@@ -73,6 +74,8 @@ Focused behavior still needing real-device verification:
 [ ] ESP32 applies scheduled scene_apply command and syncs actual state
 [ ] ESP32 offline cached timeline applies range outputs at real boundary time
 [ ] water-low safety still protects pump during scheduled/offline timeline apply
+[ ] MQTT command subscriber connects and processes dashboard commands
+[ ] REST command polling still works as fallback
 ```
 
 ## Current controller GPIO layout
@@ -165,6 +168,8 @@ Laravel is reachable and controls live dashboard/API behavior.
 Dashboard command -> Laravel pending command -> ESP32 poll -> ACK acknowledged -> apply locally -> ACK executed -> POST actual state
 ```
 
+With MQTT enabled, dashboard commands can also arrive through the MQTT command subscriber. REST polling remains enabled as fallback.
+
 ### Offline/API-unavailable mode
 
 Firmware keeps local control and safety active.
@@ -209,6 +214,10 @@ docs/DAILY_TIMELINE_OPERATION.md
 docs/DAILY_TIMELINE_TESTING.md
 ```
 
-## Do not work on MQTT yet
+## MQTT command support
 
-MQTT is future work. Current priority is verifying Smart Fountain daily timeline/schedule operation first.
+MQTT command subscriber support is implemented for V1. See:
+
+```text
+docs/MQTT_COMMANDS.md
+```
