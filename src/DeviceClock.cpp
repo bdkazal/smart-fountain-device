@@ -2,6 +2,10 @@
 
 #include "RtcClock.h"
 
+#ifndef RTC_SERVER_SYNC_CHECK_INTERVAL_MS
+#define RTC_SERVER_SYNC_CHECK_INTERVAL_MS 21600000UL
+#endif
+
 bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOffsetMinutesValue)
 {
   unsigned long parsedEpochSeconds = 0;
@@ -17,15 +21,23 @@ bool DeviceClock::syncFromServerTime(const String &serverTimeUtc, int timezoneOf
 
   if (synced)
   {
-    // Do not reinitialize the RTC after every Laravel config refresh.
-    // beginRtcClock() is guarded and will only initialize hardware once if it
-    // has not already been initialized during the boot/cache path.
-    if (!isRtcAvailable())
-    {
-      beginRtcClock();
-    }
+    unsigned long now = millis();
 
-    saveUtcEpochToRtc(utcEpochSeconds());
+    if (shouldCheckRtcSync(now))
+    {
+      rtcSyncCheckedAfterBoot = true;
+      lastRtcSyncCheckAt = now;
+
+      // Do not reinitialize the RTC after every Laravel config refresh.
+      // beginRtcClock() is guarded and will only initialize hardware once if it
+      // has not already been initialized during the boot/cache path.
+      if (!isRtcAvailable())
+      {
+        beginRtcClock();
+      }
+
+      saveUtcEpochToRtc(utcEpochSeconds());
+    }
   }
 
   return synced;
@@ -119,6 +131,16 @@ unsigned long DeviceClock::utcEpochSeconds() const
 String DeviceClock::sourceName() const
 {
   return timeSource;
+}
+
+bool DeviceClock::shouldCheckRtcSync(unsigned long now) const
+{
+  if (!rtcSyncCheckedAfterBoot)
+  {
+    return true;
+  }
+
+  return now - lastRtcSyncCheckAt >= RTC_SERVER_SYNC_CHECK_INTERVAL_MS;
 }
 
 bool DeviceClock::parseServerTimeUtc(const String &serverTimeUtc, unsigned long &epochSeconds) const
